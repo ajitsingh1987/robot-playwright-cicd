@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual Environment
+.venv/
+venv/
+env/
+
+# Robot Framework results
+results/
+output/
+output.xml
+log.html
+report.html
+playwright-log.txt
+
+# Allure
+allure-results/
+allure-report/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
