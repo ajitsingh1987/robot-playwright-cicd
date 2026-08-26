@@ -6,5 +6,11 @@ results/
 allure-results/
 allure-report/
 
+output/
+log.html
+output.xml
+report.html
+playwright-log.txt
+
 .pytest_cache/
 .vscode/
