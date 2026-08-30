@@ -1,18 +1,22 @@
-stage('Build Docker Image') {
-    steps {
-        bat 'docker build -t robot-playwright-cicd:latest .'
-    }
-}
-
-stage('Run Robot Tests in Docker') {
+stage('Docker Check') {
     steps {
         bat '''
-        if exist allure-results rmdir /s /q allure-results
-        mkdir allure-results
+            set DOCKER_HOST=npipe:////./pipe/dockerDesktopLinuxEngine
 
-        docker run --rm ^
-          -v "%CD%\\allure-results:/app/allure-results" ^
-          robot-playwright-cicd:latest
+            echo ===== DOCKER HOST =====
+            echo %DOCKER_HOST%
+
+            echo ===== DOCKER PATH =====
+            where docker
+
+            echo ===== DOCKER VERSION =====
+            docker --version
+
+            echo ===== DOCKER PS =====
+            docker ps
+
+            echo ===== DOCKER INFO =====
+            docker info
         '''
     }
 }
