@@ -3,14 +3,13 @@ __pycache__/
 *.pyc
 
 results/
+output/
 allure-results/
 allure-report/
 
-output/
 log.html
-output.xml
 report.html
+output.xml
 playwright-log.txt
 
 .pytest_cache/
-.vscode/
