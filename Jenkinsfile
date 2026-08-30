@@ -1,21 +1,10 @@
 stage('Docker Check') {
     steps {
         bat '''
-            set DOCKER_HOST=npipe:////./pipe/dockerDesktopLinuxEngine
-
-            echo ===== DOCKER HOST =====
-            echo %DOCKER_HOST%
-
-            echo ===== DOCKER PATH =====
-            where docker
-
-            echo ===== DOCKER VERSION =====
+            docker context use desktop-linux
+            docker context show
             docker --version
-
-            echo ===== DOCKER PS =====
             docker ps
-
-            echo ===== DOCKER INFO =====
             docker info
         '''
     }
