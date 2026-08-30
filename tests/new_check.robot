@@ -3,7 +3,7 @@ Library    Browser
 
 *** Test Cases ***
 Verify Rahul Shetty Academy Homepage
-    New Browser    chromium    headless=False
+    New Browser    chromium    headless=True
     New Page    https://rahulshettyacademy.com/    wait_until=domcontentloaded
 
     ${url}=    Get Url
