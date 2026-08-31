@@ -45,5 +45,5 @@ RUN rfbrowser init
 # Copy project files
 COPY . .
 
-# Run Robot Framework tests
-CMD ["python", "-m", "robot", "--listener", "allure_robotframework:allure-results", "tests"]
+# Run Robot Framework tests (results + allure-results written under /app/results)
+CMD ["python", "-m", "robot", "--outputdir", "results", "--listener", "allure_robotframework:results/allure-results", "tests"]
