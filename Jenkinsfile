@@ -23,7 +23,6 @@ pipeline {
         stage('Docker Check') {
             steps {
                 bat '''
-                    docker context use desktop-linux
                     docker context show
                     docker --version
                     docker ps
@@ -39,9 +38,8 @@ pipeline {
         }
 
         // 4. Run Robot + Playwright tests in Docker.
-        //    docker run returns non-zero when any test fails. We must
-        //    still proceed to publish results, so catch the error here
-        //    (marks build + stage FAILED) WITHOUT aborting the pipeline.
+        //    docker run returns non-zero when any test fails.
+        //    Results are still published through catchError.
         stage('Docker Run') {
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
@@ -75,13 +73,16 @@ pipeline {
         always {
             echo "Build result: ${currentBuild.currentResult}"
         }
+
         success {
             echo 'Pipeline SUCCESS'
         }
+
         failure {
             echo 'Pipeline FAILED - tests failed or infrastructure error'
             // notification hook point (email / Teams / Discord)
         }
+
         cleanup {
             cleanWs()
         }
