@@ -1,11 +1,12 @@
 *** Settings ***
 Library    Browser
+Variables    ../variables/urls.py
+Resource    ../resources/browser.resource
+Resource    ../pages/google_page.robot
+Suite Setup    Start Browser
+Suite Teardown    Stop Browser
 
 *** Test Cases ***
 Verify Google Page
-    New Browser    chromium    headless=True
-    New Page    https://www.google.com
-    ${title}=    Get Title
-    Log    Page Title: ${title}
-    Should Contain    ${title}    Google
-    Close Browser
+    Go To Google Page
+    Verify Google Page Title

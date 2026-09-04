@@ -13,3 +13,9 @@ output.xml
 playwright-log.txt
 
 .pytest_cache/
+
+# Generated QA evidence, MCP logs and temporary files
+evidence/
+.playwright-mcp/
+*.tmp
+*.swp

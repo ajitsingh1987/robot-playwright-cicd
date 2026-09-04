@@ -9,6 +9,9 @@ results/
 output/
 allure-results/
 allure-report/
+evidence/
+.playwright-mcp/
 
 *.html
 *.log
+*.tmp
