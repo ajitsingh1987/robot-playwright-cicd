@@ -86,3 +86,22 @@ allure-report/
 Dockerfile
 Jenkinsfile
 AGENTS.md
+
+---
+
+## 4. Phase 2: Autonomous CI/CD Contract
+
+The Orchestrator drives the Git -> Jenkins flow in this order:
+
+1. FINAL_QUALITY_GATE is the ONLY authorizer of CI_COMMIT. Any mandatory gate
+   failure blocks the commit/push (CICD_LOCKED).
+2. CI_COMMIT stages only the intended files, runs a staged-diff secret scan,
+   and creates one meaningful commit. Empty "kick" commits are forbidden.
+3. CI_TRIGGER pushes to origin/main. The GitHub webhook is the ONLY mechanism
+   allowed to start Jenkins job Robot-Playwright-Sanity; manual "Build Now"
+   and remote-trigger tokens are prohibited.
+4. CI_VALIDATION confirms Jenkins checks out the pushed SHA, executes every
+   test under tests/, and publishes Allure results on the build.
+5. CI_HEALING permits at most 3 autonomous repair attempts. A Git -> Jenkins ->
+   Git loop is forbidden, and a healing fix must not modify deployment/release
+   logic, Jenkinsfile, Dockerfile, or the test architecture.
