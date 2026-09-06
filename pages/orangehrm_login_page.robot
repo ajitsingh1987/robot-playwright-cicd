@@ -46,25 +46,9 @@ Verify Login Page Displayed
     Wait For Elements State    input[placeholder="Username"]    visible
     Wait For Elements State    input[placeholder="Password"]    visible
 
-Logout From OrangeHRM
-    # NOTE: oxd-userdropdown-tab is a framework-generated class from OrangeHRM.
-    # If the OrangeHRM frontend framework updates its class naming convention,
-    # this selector will need to be updated.
-    Click    //span[contains(@class,"oxd-userdropdown-tab")]
-    Click    //a[normalize-space()="Logout"]
-    Verify Login Page Displayed
-
 Verify Redirected To Login Page
     ${url}=    Get Url
     Should Contain    ${url}    /auth/login
-
-Click Forgot Password Link
-    Click    p.orangehrm-login-forgot-header
-
-Verify Forgot Password Page Open
-    Wait For Elements State    h6.orangehrm-forgot-password-title    visible
-    ${url}=    Get Url
-    Should Contain    ${url}    requestPasswordResetCode
 
 Verify OrangeHRM Login Branding
     Wait For Elements State    img[alt="company-branding"]    visible

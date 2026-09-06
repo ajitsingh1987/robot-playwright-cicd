@@ -192,6 +192,34 @@ Before planning new scenarios, search existing tests for:
 * Existing negative scenarios
 * Existing validation scenarios
 
+### 6.1 Requirement Ownership Map (HARD RULE)
+
+Build a requirement-to-file ownership map of existing tests under `tests/`:
+
+```text
+Requirement            → Dedicated test file
+--------------------------------------------------
+<Requirement>          → tests/<requirement-kebab-case>.robot
+<Requirement>          → tests/<requirement-kebab-case>.robot
+```
+
+Existing suites are discovered and mapped from the actual repository under `tests/`
+during planning; suite names are NEVER hard-coded into a plan.
+
+Check existing tests FIRST to prevent duplicate ownership.
+
+The plan MUST specify the ONE dedicated test file for the new requirement:
+
+```text
+Dedicated Test File:
+tests/<requirement-kebab-case>.robot
+```
+
+NEVER plan to add a new requirement's scenarios to an unrelated existing test
+file. Existing test files are owned by their original requirement. Shared Page
+Objects under `pages/` and resources under `resources/` may be reused, but
+shared test files are forbidden.
+
 If equivalent automation already exists:
 
 Do NOT blindly create another scenario.
@@ -204,6 +232,83 @@ Instead determine whether the existing test:
 * has insufficient assertions
 * uses outdated behavior
 * is missing an important edge case
+
+If the existing automation belongs to a DIFFERENT requirement's test file,
+never plan to add or edit it; plan a dedicated test file instead.
+
+### 6.2 Impact-Based Execution Scope Planning
+
+The plan MUST also record the planned execution scope so the Orchestrator can make
+an evidence-based scope decision. The scope is derived from repository evidence,
+never hard-coded suite names:
+
+```text
+Planned Execution Scope:  <TARGETED | IMPACTED_REGRESSION | FULL_REGRESSION>
+Scope Justification:      <expected change surface and what would prove impact>
+```
+
+Guidance:
+
+* If the plan changes/touches shared resources, shared keywords, credentials,
+  authentication, or a Page Object / data source used by more than one suite,
+  plan `FULL_REGRESSION`.
+* If the change is contained to the requirement's own test file, plan `TARGETED`.
+* If more than one suite is expected to be impacted, plan `IMPACTED_REGRESSION`.
+
+The Orchestrator performs the final scope decision (§11.4.11 in qa-orchestrator.md);
+the plan's scope statement is input/evidence, not the final verdict.
+
+### 6.3 Requirement Classification Output (MANDATORY)
+
+Every plan MUST classify the requirement so the Orchestrator can decide whether a
+feature/fix branch is required BEFORE any automation modification:
+
+```text
+AUTOMATION_MODE:      <REGRESSION | NEW_AUTOMATION | AUTOMATION_ENHANCEMENT | AUTOMATION_FIX>
+COVERAGE_DECISION:    <SUFFICIENT | PARTIAL | MISSING | UNKNOWN>
+RECOMMENDED_BRANCH:   <all four patterns are valid branch recommendations>
+                      - feature/qa-auto-<functionality>                          (NEW_AUTOMATION)
+                      - feature/qa-auto-<functionality>-<enhancement>            (AUTOMATION_ENHANCEMENT)
+                      - fix/qa-auto-<functionality>-<problem>                    (AUTOMATION_FIX)
+                      - NONE                                                     (REGRESSION — no branch)
+REGRESSION_SCOPE:     <suites/areas the regression must cover, from repository evidence>
+```
+
+Rules:
+
+- COVERAGE_DECISION = SUFFICIENT and the requirement adds NO new scenario intent
+  → AUTOMATION_MODE = REGRESSION. The plan documents the regression scope only.
+  NO branch, NO modification, NO commit, NO push.
+- COVERAGE_DECISION = PARTIAL / MISSING and new scenarios are required
+  → NEW_AUTOMATION (MISSING) or AUTOMATION_ENHANCEMENT (PARTIAL extension);
+  a feature branch is recommended (feature/qa-auto-<functionality> or
+  feature/qa-auto-<functionality>-<enhancement>).
+- A defect in existing automation → AUTOMATION_FIX; a fix branch is recommended
+  (fix/qa-auto-<functionality>-<problem>).
+- COVERAGE_DECISION = UNKNOWN → the plan must call for deeper analysis; it never
+  authorizes a branch on guesswork.
+- The classification order is fixed:
+  classify → impact → coverage decision → branch decision → modify.
+  COVERAGE_DECISION is finalized only AFTER IMPACT_ANALYSIS; the BRANCH_DECISION
+  follows the coverage decision, and branch creation always precedes automation
+  modification.
+
+The Orchestrator owns the final classification, coverage and branch decisions
+(REQUIREMENT_CLASSIFICATION / IMPACT_ANALYSIS / COVERAGE_DECISION / BRANCH_DECISION in
+qa-orchestrator.md). This output is evidence/input, never a unilateral mandate to create
+a branch by the Planner.
+
+### 6.4 REGRESSION-ONLY MODE (Planner Rule)
+
+When AUTOMATION_MODE = REGRESSION:
+
+- The plan contains ONLY the regression scope (which suites to run and why).
+- The plan MUST NOT introduce new scenarios, new test files, or automation changes.
+- No branch recommendation (RECOMMENDED_BRANCH = NONE), no commit, no push.
+- REGRESSION mode does not proceed to EXPLORATION or GENERATION; it executes the
+  regression scope and terminates at COMPLETED. A REGRESSION-mode failure is reported
+  as REGRESSION_FAILURE and is never healed and never auto-converted into an
+  AUTOMATION_FIX.
 
 ---
 
@@ -946,6 +1051,20 @@ Every generated plan must use this structure:
 - <Already covered behavior>
 - <Missing coverage>
 
+## Test File Ownership
+
+- <Requirement → dedicated test file: tests/<requirement-kebab-case>.robot>
+- <Existing tests checked first; no duplicate ownership>
+- <No new requirement scenarios in an unrelated existing test file>
+
+## Requirement Classification
+
+- **AUTOMATION_MODE:** <REGRESSION | NEW_AUTOMATION | AUTOMATION_ENHANCEMENT | AUTOMATION_FIX>
+- **COVERAGE_DECISION:** <SUFFICIENT | PARTIAL | MISSING | UNKNOWN> (finalized after impact analysis)
+- **RECOMMENDED_BRANCH:** <feature/qa-auto-<functionality> | feature/qa-auto-<functionality>-<enhancement> | fix/qa-auto-<functionality>-<problem> | NONE (REGRESSION)>
+- **REGRESSION_SCOPE:** <suites/areas the regression must cover, from repository evidence>
+- **Branch Required Before Modification:** <YES (AUTOMATION modes) / NO (REGRESSION — no branch, no modification)>
+
 ## Reusable Components
 
 ### Existing Page Objects
@@ -1267,7 +1386,9 @@ Never:
 * reset project files
 * checkout destructive changes
 
-The Planner only explores and documents.
+The Planner only explores and documents. It RECOMMENDS a branch via
+`RECOMMENDED_BRANCH` (§6.3); the Orchestrator owns branch creation
+(CREATE_FEATURE_BRANCH) and the actual Git lifecycle.
 
 ---
 
@@ -1308,6 +1429,10 @@ Before saving the plan:
 * [ ] AGENTS.md reviewed.
 * [ ] Existing project structure inspected.
 * [ ] Existing Robot tests inspected.
+* [ ] Requirement classified (AUTOMATION_MODE + COVERAGE_DECISION + RECOMMENDED_BRANCH + REGRESSION_SCOPE).
+* [ ] Requirement-to-file ownership map built before planning.
+* [ ] ONE dedicated test file specified for the requirement.
+* [ ] No new requirement scenarios planned for an unrelated test file.
 * [ ] Existing Page Objects inspected.
 * [ ] Existing reusable keywords inspected.
 * [ ] Existing test data inspected.

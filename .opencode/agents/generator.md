@@ -228,6 +228,77 @@ Reuse existing components whenever they represent the same business behavior.
 
 Do not duplicate an existing keyword or Page Object.
 
+### 7.1 Requirement Isolation (HARD RULE — ONE REQUIREMENT → ONE TEST FILE)
+
+Before writing any test:
+
+1. Inspect existing tests under `tests/`.
+2. Build a requirement-to-file ownership map.
+3. Identify the ONE dedicated test file for the current requirement:
+   `tests/<requirement-kebab-case>.robot`
+4. If a dedicated file does not exist, CREATE it FIRST.
+5. NEVER add the requirement's scenarios to an unrelated existing test file.
+6. Existing test files are owned by their original requirement.
+7. Page Objects under `pages/` and resources under `resources/` MAY be reused
+   across requirements; test files may NOT be shared.
+8. Splitting a mixed test file into per-requirement files restores the rule.
+
+### 7.1A Scope-Feeding Evidence
+
+Generation may touch shared artifacts (shared resources, shared keywords, POMs,
+variables, data). When it does, the Generator MUST report which shared artifacts
+were reused/modified so the Orchestrator can make an evidence-based scope decision:
+
+```text
+Reused / modified shared artifacts: <pages/, resources/, variables/, data/ touched>
+Suites consuming those artifacts:   <from actual imports/references>
+```
+
+Do NOT hard-code suite names; derive them from actual repository imports. The
+Orchestrator owns the final scope decision (TARGETED / IMPACTED_REGRESSION / FULL_REGRESSION).
+
+### 7.2 Branch-Safety Gate Before Any Modification (HARD GATE)
+
+Before modifying ANY automation file, verify that the Orchestrator supplied ALL six
+evidence fields and RECORD them:
+
+```text
+IMPACT_ANALYSIS:      <COMPLETE — impact analysis recorded by the Orchestrator>
+COVERAGE_DECISION:    <KNOWN — SUFFICIENT | PARTIAL | MISSING (never UNKNOWN here)>
+AUTOMATION_MODE:      <KNOWN — NEW_AUTOMATION | AUTOMATION_ENHANCEMENT | AUTOMATION_FIX>
+ALLOWED_SCOPE:        <KNOWN — names/areas the Orchestrator authorized to modify>
+ACTIVE_BRANCH:        <VERIFIED — current branch via git branch --show-current>
+BRANCH_AUTHORIZED:    <TRUE — feature/fix branch created by the Orchestrator + authorized for this mode>
+```
+
+REFUSE to modify automation when ANY of the following is true:
+
+- Any of the six evidence fields is missing
+- IMPACT_ANALYSIS != COMPLETE, or COVERAGE_DECISION = UNKNOWN
+- AUTOMATION_MODE = REGRESSION (regression-only work must NOT touch automation)
+- AUTOMATION_MODE is missing/unknown
+- BRANCH_AUTHORIZED != TRUE
+- No active branch can be verified
+- The active branch is a protected default branch (main/master) but the mode
+  requires a feature/fix branch
+- The active branch name does not follow the naming contract
+  (feature/qa-auto-<functionality>, feature/qa-auto-<functionality>-<enhancement>,
+  fix/qa-auto-<functionality>-<problem>)
+- The change exceeds ALLOWED_SCOPE (the Orchestrator did not authorize this surface)
+- The needed feature/fix branch was not created by the Orchestrator before this task
+
+When blocked, report:
+
+```text
+GENERATION_BLOCKED: <reason>
+BRANCH_SAFETY: FAIL
+```
+
+This is a hard gate: automation modification without an authorized feature/fix
+branch (or a REGRESSION-only default-branch run that never modifies) is forbidden.
+The branch is created by the Orchestrator (CREATE_FEATURE_BRANCH), never by the
+Generator; the Generator only verifies it.
+
 ---
 
 # 8. PAGE OBJECT MODEL
@@ -714,6 +785,19 @@ variables/
 
 follow that structure.
 
+### 23.1 Test File Ownership (HARD RULE)
+
+* Every requirement owns exactly ONE dedicated test file:
+  `tests/<requirement-kebab-case>.robot`
+* Create the dedicated file BEFORE writing the requirement's scenarios.
+* NEVER place new requirement scenarios inside an unrelated existing test file
+  (for example: never put Forgot Password scenarios inside the Login test file).
+* Existing test files must only contain scenarios of their own requirement.
+* Shared Page Objects and resources may be reused across requirements;
+  shared TEST files are forbidden.
+* If no dedicated file exists yet, create `tests/<requirement-kebab-case>.robot`
+  before implementing any scenario.
+
 Do not reorganize the project merely to generate one test.
 
 ---
@@ -1018,7 +1102,17 @@ unless the requested scenario genuinely requires it and project rules permit it.
 
 ---
 
-# 39. GIT POLICY
+# 39. GIT AND BRANCH POLICY
+
+The Generator never creates, commits, or pushes branches itself. Branch creation
+is owned by the Orchestrator (CREATE_FEATURE_BRANCH).
+
+Before modifying any automation, the Generator MUST verify the branch-safety gate
+(§7.2) with ALL six evidence fields supplied by the Orchestrator: IMPACT_ANALYSIS =
+COMPLETE, COVERAGE_DECISION = KNOWN (not UNKNOWN), AUTOMATION_MODE = KNOWN,
+ALLOWED_SCOPE = KNOWN, ACTIVE_BRANCH = VERIFIED (not the protected default branch,
+matching the AUTOMATION_MODE), BRANCH_AUTHORIZED = TRUE. Any missing/mismatched field,
+or AUTOMATION_MODE = REGRESSION, → REFUSE (GENERATION_BLOCKED).
 
 Do not:
 
@@ -1026,10 +1120,11 @@ Do not:
 * push
 * create branches
 * modify Git history
+* reset or stash user changes
 
 unless explicitly instructed by a higher-priority project instruction.
 
-The Generator should normally leave Git operations to the user/CI process.
+The Generator should normally leave Git operations to the Orchestrator/CI process.
 
 ---
 
@@ -1128,6 +1223,8 @@ Before reporting completion:
 * [ ] Correct plan file read.
 * [ ] Correct scenario number implemented.
 * [ ] Existing automation inspected.
+* [ ] Requirement-to-file ownership map built.
+* [ ] ONE dedicated test file owns the requirement; no scenarios in an unrelated test file.
 * [ ] Existing Page Objects inspected.
 * [ ] Existing keywords inspected.
 * [ ] Existing test data inspected.
@@ -1147,7 +1244,12 @@ Before reporting completion:
 * [ ] Jenkins compatibility considered.
 * [ ] Windows PowerShell compatibility considered.
 * [ ] No unrelated files modified.
-* [ ] No Git commit/push performed.
+* [ ] Branch-safety gate (§7.2) verified BEFORE modification with ALL six Orchestrator
+      evidence fields (IMPACT_ANALYSIS=COMPLETE, COVERAGE_DECISION=KNOWN,
+      AUTOMATION_MODE=KNOWN, ALLOWED_SCOPE=KNOWN, ACTIVE_BRANCH=VERIFIED,
+      BRANCH_AUTHORIZED=TRUE).
+* [ ] No modification performed for a REGRESSION-only requirement.
+* [ ] No Git commit/push/branch creation performed by the Generator.
 * [ ] Test execution attempted where possible.
 * [ ] Execution result accurately reported.
 * [ ] No false pass created.
@@ -1179,9 +1281,11 @@ Before reporting completion:
 
 **Do not redesign the framework unnecessarily.**
 
-**Execute the generated test whenever possible.**
+**Execution is required before claiming success.**
 
 **Never claim success without execution evidence.**
+
+**Never modify automation without a verified feature/fix branch — REGRESSION-only work never modifies automation.**
 
 **Fix real implementation problems; never hide failures.**
 

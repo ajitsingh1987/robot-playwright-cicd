@@ -50,6 +50,8 @@ Review the automation for:
 * Jenkins compatibility
 * CI/CD readiness
 * architecture compliance
+* test file ownership (ONE REQUIREMENT → ONE dedicated test file)
+* requirement isolation (no new requirement scenarios in unrelated test files)
 
 The review must identify problems and provide actionable recommendations.
 
@@ -381,6 +383,103 @@ Look for:
 Tests should be independently executable wherever practical.
 
 If a dependency is intentional, it should be documented.
+
+---
+
+# 14.1 TEST FILE OWNERSHIP / REQUIREMENT ISOLATION (BLOCKING CHECK)
+
+HARD project rule: **ONE REQUIREMENT → ONE DEDICATED TEST FILE.**
+
+Verify that:
+
+* every requirement owns exactly one dedicated test file under `tests/`
+* a new requirement never shares an unrelated existing test file
+* existing test files contain ONLY scenarios of their own requirement
+* no requirement is duplicated across multiple test files
+* Page Object/resource files may be shared, but TEST files may NOT be shared
+
+Check the ownership map:
+
+```text
+Requirement                        → Dedicated test file
+--------------------------------------------------
+<Requirement>                      → tests/<requirement-kebab-case>.robot
+```
+
+Existing suites are discovered from the actual `tests/` directory; suite names are
+NEVER hard-coded into ownership expectations.
+
+### 14.1A Scope Decision Verification
+
+Verify the Orchestrator's regression-scope decision, not just result counts:
+
+* [ ] `execution_scope` is exactly one of TARGETED / IMPACTED_REGRESSION / FULL_REGRESSION
+* [ ] `scope_decision_reason` and `scope_evidence` were recorded
+* [ ] Scope was derived from repository evidence, not hard-coded suite names
+* [ ] `FULL_REGRESSION` was selected on LOW confidence, shared-core change, or insufficient evidence
+* [ ] No TARGETED / IMPACTED_REGRESSION pass was reported as a "regression"
+* [ ] Full regression ran whenever `full_regression_needed = YES`
+
+If the executed scope contradicts the impact rules (for example a shared-resource change
+scoped as TARGETED), this is a scope-gating **BLOCKING** finding.
+
+### 14.2 Mandatory Rejection
+
+If a new requirement's scenarios live inside an unrelated existing test file
+(for example: Forgot Password scenarios inside the Login test file), this is a
+**BLOCKING** violation.
+
+The Reviewer MUST:
+
+```text
+Verdict: CHANGES_RECOMMENDED or BLOCKED  (never APPROVED)
+Severity: HIGH or CRITICAL
+Finding category: Requirement Isolation
+Recommendation: Split the mixed file into per-requirement test files.
+```
+
+The Orchestrator treats any verdict other than APPROVED/PASS as a gate failure
+(CICD = LOCKED).
+
+### 14.3 Git Lifecycle Validation (BLOCKING CHECK)
+
+The Reviewer MUST validate the Git lifecycle contract (AGENTS.md §6-§7), not
+just the code. The lifecycle must follow:
+classify -> impact -> coverage decision -> branch decision -> modify.
+COVERAGE_DECISION must be finalized ONLY after IMPACT_ANALYSIS (never on guesswork),
+the BRANCH_DECISION must derive from the automation mode + coverage decision, and only
+then may the branch be created before modification.
+
+For AUTOMATION modes (NEW_AUTOMATION / AUTOMATION_ENHANCEMENT / AUTOMATION_FIX):
+
+* [ ] Work was performed on a feature/fix branch (feature/qa-auto-* / fix/qa-auto-*)
+* [ ] The branch was created BEFORE the automation was modified
+* [ ] The protected default branch (main/master) was not directly modified
+* [ ] COVERAGE_DECISION was recorded as KNOWN/SUFFICIENT/PARTIAL/MISSING (not UNKNOWN for branching)
+* [ ] Commit/push (if any) happened only after FINAL_QUALITY_GATE = PASS and only
+      to that branch
+* [ ] No autonomous push to origin/main was used
+
+For REGRESSION mode:
+
+* [ ] NO branch was created
+* [ ] NO automation file was modified
+* [ ] NO commit was created
+* [ ] NO push to origin/main occurred
+* [ ] The regression only ran the relevant suites on the current default branch
+* [ ] A REGRESSION-mode failure stopped at REGRESSION_FAILURE and was NOT healed /
+      NOT auto-converted into an AUTOMATION_FIX
+
+Violations of the Git lifecycle (e.g. automation modified on the default branch,
+a REGRESSION run that modified files, an autonomous push to origin/main, coverage
+decided on guesswork, or a REGRESSION failure auto-converted into healing) are
+BLOCKING findings:
+
+```text
+Verdict: CHANGES_RECOMMENDED or BLOCKED  (never APPROVED)
+Severity: HIGH or CRITICAL
+Finding category: Git Lifecycle
+```
 
 ---
 
@@ -940,6 +1039,11 @@ Do not:
 
 The Reviewer only inspects and reports.
 
+The Reviewer's read-only role includes VALIDATING the Git lifecycle contract
+(§14.3): AUTOMATION modes must have a feature/fix branch, REGRESSION mode must
+have no branch/no modification/no commit/no push. This validation never involves
+performing Git operations.
+
 ---
 
 # 36. FINAL QUALITY CHECKLIST
@@ -949,6 +1053,9 @@ Before returning the review:
 * [ ] Project structure inspected.
 * [ ] AGENTS.md followed.
 * [ ] POM reviewed.
+* [ ] Test file ownership map checked (ONE REQUIREMENT → ONE dedicated test file).
+* [ ] Requirement isolation verified (no new scenarios in unrelated test files).
+* [ ] Execution scope decision verified (TARGETED / IMPACTED_REGRESSION / FULL_REGRESSION with reason + evidence).
 * [ ] Locator quality reviewed.
 * [ ] Robot Framework practices reviewed.
 * [ ] Playwright practices reviewed.
@@ -973,6 +1080,7 @@ Before returning the review:
 * [ ] No tests deleted.
 * [ ] No Selenium introduced.
 * [ ] No Git commit/push performed.
+* [ ] Git lifecycle validated (§14.3): branch/classification contract for AUTOMATION vs REGRESSION.
 * [ ] No fabricated findings or execution results.
 
 ---
@@ -998,5 +1106,7 @@ Before returning the review:
 **Never claim execution success without evidence.**
 
 **Never introduce Selenium.**
+
+**Validate the Git lifecycle: branch before modification for AUTOMATION modes; no branch, no modification for REGRESSION.**
 
 **Never commit or push changes.**

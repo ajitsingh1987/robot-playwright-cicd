@@ -212,6 +212,38 @@ Do not assume directories exist.
 
 Follow the existing project architecture.
 
+# 5A. VERIFY BRANCH AND AUTOMATION MODE BEFORE ANY FIX
+
+Before making ANY change, verify and record:
+
+```text
+ACTIVE_BRANCH:    <current branch>
+AUTOMATION_MODE:  <REGRESSION | NEW_AUTOMATION | AUTOMATION_ENHANCEMENT | AUTOMATION_FIX>
+ALLOWED_SCOPE:    <which files the current mode/scope permits the Healer to touch>
+```
+
+Healing is ONLY allowed:
+
+- on the active feature/fix branch owned by the Orchestrator
+  (feature/qa-auto-* / fix/qa-auto-*), or
+- on the default branch ONLY when the Orchestrator explicitly designates a
+  default-branch healing scope — never for REGRESSION-only mode.
+
+Only AUTOMATION-mode failures (NEW_AUTOMATION / AUTOMATION_ENHANCEMENT / AUTOMATION_FIX)
+ever reach the Healer. A REGRESSION-mode failure is reported by the Orchestrator as
+REGRESSION_FAILURE and terminates at BLOCKED — it is NEVER healing material and NEVER
+auto-converted into an AUTOMATION_FIX.
+
+REFUSE to heal (report + stop) when:
+
+- The active branch cannot be verified
+- The mode is REGRESSION-only (regressions never modify automation)
+- The required fix is outside the ALLOWED_SCOPE of the current mode
+- The branch was not created/authorized by the Orchestrator for this work
+
+Healing never creates, commits, or pushes branches itself; the fix is applied only
+on the branch the Orchestrator authorized (§40 GIT POLICY).
+
 ---
 
 # 6. READ THE FAILING TEST FIRST
@@ -1059,6 +1091,10 @@ Do not:
 
 unless explicitly instructed by higher-priority project instructions.
 
+The Healer applies fixes ONLY on the branch the Orchestrator authorized
+(ACTIVE_BRANCH) and ONLY within the ALLOWED_SCOPE of the current automation mode.
+Never modify automation for a REGRESSION-only requirement.
+
 ---
 
 # 41. STOP CONDITIONS
@@ -1076,6 +1112,10 @@ STOP and request human input when:
 9. The seed/authentication mechanism is broken.
 10. Required execution evidence is unavailable.
 11. The failure remains after the permitted repair attempts.
+12. The active branch/mode does not authorize the fix (§5A).
+13. The failure was reported by the Orchestrator as a REGRESSION-mode failure
+    (REGRESSION_FAILURE): REGRESSION-mode failures are NEVER healed and are NEVER
+    auto-converted into an AUTOMATION_FIX.
 
 ---
 
@@ -1095,7 +1135,12 @@ After three unsuccessful attempts:
 
 ```text
 STOP
+No 4th attempt.
 ```
+
+The healing-attempt counter is owned by the Orchestrator and the Healer never resets it.
+After the 3rd failed attempt the Orchestrator records HEALING_EXHAUSTED and the workflow
+stops.
 
 Report:
 
@@ -1304,6 +1349,7 @@ Severity must be evidence-based.
 Before reporting the healing as complete:
 
 * [ ] AGENTS.md reviewed.
+* [ ] Active branch verified (§5A) and fix within ALLOWED_SCOPE.
 * [ ] Failing test inspected.
 * [ ] Relevant resource files inspected.
 * [ ] Relevant Page Objects inspected.
@@ -1335,10 +1381,14 @@ Before reporting the healing as complete:
 * [ ] Windows PowerShell compatibility considered.
 * [ ] Only required files modified.
 * [ ] Execution performed where possible.
+* [ ] No fix applied to a REGRESSION-mode failure (REGRESSION_FAILURE is never healed).
+* [ ] Healing-attempt counter NOT modified by the Healer (owned by the Orchestrator).
+* [ ] No 4th healing attempt performed.
 * [ ] Execution results accurately reported.
 * [ ] Two-run verification attempted where practical.
 * [ ] No false PASS reported.
-* [ ] No Git commit/push performed.
+* [ ] No Git commit/push/branch creation performed.
+* [ ] Fix applied on the Orchestrator-authorized branch only.
 
 ---
 

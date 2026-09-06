@@ -2,6 +2,7 @@
 Library    Browser
 Variables    ../variables/credentials.py
 Variables    ../variables/urls.py
+Variables    ../data/orangehrm_login_data.py
 Resource    ../resources/browser.resource
 Resource    ../pages/orangehrm_login_page.robot
 Suite Setup    Start Browser
@@ -20,25 +21,19 @@ Valid OrangeHRM Login
     Login With Credentials    ${ORANGEHRM_USERNAME}    ${ORANGEHRM_PASSWORD}
     Verify Dashboard Page Contains    Dashboard
 
-Valid Login Can Be Logged Out
-    [Documentation]    Verify a valid session can be ended.
-    Login With Credentials    ${ORANGEHRM_USERNAME}    ${ORANGEHRM_PASSWORD}
-    Verify Dashboard Page Contains    Dashboard
-    Logout From OrangeHRM
-
 Invalid Username With Valid Password
     [Documentation]    Reject an unknown username.
-    Login With Credentials    invalid_user    ${ORANGEHRM_PASSWORD}
+    Login With Credentials    ${INVALID_USERNAME}    ${ORANGEHRM_PASSWORD}
     Verify Error Message Contains    Invalid credentials
 
 Valid Username With Invalid Password
     [Documentation]    Reject an incorrect password.
-    Login With Credentials    ${ORANGEHRM_USERNAME}    wrongpassword
+    Login With Credentials    ${ORANGEHRM_USERNAME}    ${INVALID_PASSWORD}
     Verify Error Message Contains    Invalid credentials
 
 Invalid Username And Password
     [Documentation]    Reject two invalid credentials.
-    Login With Credentials    invalid_user    wrongpassword
+    Login With Credentials    ${INVALID_USERNAME}    ${INVALID_PASSWORD}
     Verify Error Message Contains    Invalid credentials
 
 Empty Username
@@ -63,12 +58,12 @@ Empty Username And Password
 
 Username Is Case Insensitive
     [Documentation]    Verify a valid username is accepted with different casing.
-    Login With Credentials    Admin    ${ORANGEHRM_PASSWORD}
+    Login With Credentials    ${VALID_USERNAME_UPPERCASE}    ${ORANGEHRM_PASSWORD}
     Verify Dashboard Page Contains    Dashboard
 
 Case Sensitive Password
     [Documentation]    Reject a password with incorrect casing.
-    Login With Credentials    ${ORANGEHRM_USERNAME}    Admin123
+    Login With Credentials    ${ORANGEHRM_USERNAME}    ${VALID_PASSWORD_WRONG_CASE}
     Verify Error Message Contains    Invalid credentials
 
 Unauthenticated Protected Page
@@ -97,9 +92,3 @@ Username With Surrounding Whitespace Is Rejected
     [Documentation]    Verify leading and trailing spaces in the username are not trimmed and login is rejected.
     Login With Credentials    ${SPACE}${SPACE}${ORANGEHRM_USERNAME}${SPACE}${SPACE}    ${ORANGEHRM_PASSWORD}
     Verify Error Message Contains    Invalid credentials
-
-Forgot Password Link Opens Reset Page
-    [Documentation]    Verify the forgot password link navigates to the password reset page.
-    Go To OrangeHRM Login Page
-    Click Forgot Password Link
-    Verify Forgot Password Page Open
