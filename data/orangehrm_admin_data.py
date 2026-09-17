@@ -1,0 +1,8 @@
+import time
+
+RUN_SUFFIX = str(int(time.time() * 1000))
+
+ADMIN_TEST_USERNAME = f"qadmn_{RUN_SUFFIX}"
+ADMIN_TEST_PASSWORD = "Admin@1234"
+ADMIN_DUPLICATE_USERNAME = f"qadupe_{RUN_SUFFIX}"
+ADMIN_TEST_EMPLOYEE = "Orange Test"
