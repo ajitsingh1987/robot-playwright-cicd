@@ -313,18 +313,24 @@ If a source artifact contains an exposed secret:
 
 # 10. FAILURE CATEGORIES
 
-Use the following standardized categories:
+Use the following standardized SIX canonical categories:
 
 ```text
-TEST_DEFECT
 AUTOMATION_DEFECT
-LOCATOR_DEFECT
+TEST_DATA_DEFECT
 APPLICATION_DEFECT
-DATA_DEFECT
-ENVIRONMENT_INFRASTRUCTURE
-CONFIGURATION_DEFECT
+ENVIRONMENT_FAILURE
+FLAKY
 UNKNOWN
 ```
+
+Legacy names (TEST_DEFECT / LOCATOR_DEFECT -> AUTOMATION_DEFECT; DATA_DEFECT /
+CONFIGURATION_DEFECT -> TEST_DATA_DEFECT; ENVIRONMENT_INFRASTRUCTURE /
+EXTERNAL_SERVICE_DEFECT -> ENVIRONMENT_FAILURE; FLAKE -> FLAKY) are translated to these
+six. Report the final-gate outcome when available: GREEN / RED_AUTOMATION / RED_DATA /
+RED_APPLICATION / RED_ENVIRONMENT / RED_FLAKY / RED_UNKNOWN. RED* is a legitimate outcome
+and is NEVER reported as a pass; RED_ENVIRONMENT is the correct outcome for a run blocked
+by an unavailable public demo and must not be relabeled GREEN.
 
 Use Failure Analysis Agent results when available.
 
@@ -379,11 +385,9 @@ Do not hide the application defect.
 
 For:
 
-`LOCATOR_DEFECT`
-
 `AUTOMATION_DEFECT`
 
-`CONFIGURATION_DEFECT`
+`TEST_DATA_DEFECT`
 
 report:
 
@@ -402,7 +406,7 @@ Do not claim the fix succeeded unless the re-run confirms it.
 
 For:
 
-`DATA_DEFECT`
+`TEST_DATA_DEFECT`
 
 identify whether the problem relates to:
 
@@ -549,7 +553,7 @@ Example:
 
 ```text
 Initial Result: FAILED
-Failure Category: LOCATOR_DEFECT
+Failure Category: AUTOMATION_DEFECT
 Healing Attempt: 1
 Re-run Result: PASSED
 Final Status: PASSED_AFTER_HEALING

@@ -597,13 +597,11 @@ Provide browser evidence such as:
 
 The Failure Analysis Agent will determine whether the issue is:
 
-* TEST_DEFECT
 * AUTOMATION_DEFECT
-* LOCATOR_DEFECT
+* TEST_DATA_DEFECT
 * APPLICATION_DEFECT
-* DATA_DEFECT
-* ENVIRONMENT_INFRASTRUCTURE
-* CONFIGURATION_DEFECT
+* ENVIRONMENT_FAILURE
+* FLAKY
 * UNKNOWN
 
 ---

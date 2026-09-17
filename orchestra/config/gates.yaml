@@ -1,0 +1,151 @@
+# Gate predicates for the orchestration kernel.
+#
+# Each gate is a small, deterministic predicate evaluated by the kernel against the
+# persisted run state. Gates are the ONLY way a stage may advance (or block). They are
+# pure checks over recorded evidence; nothing is inferred from an agent's verbal claim.
+#
+# Fields:
+#   id:        unique gate identifier
+#   stage:     the stage whose transition this gate guards
+#   category:  gate family (quality | final | commit | push | ci).
+#              FINAL_QUALITY_GATE evaluates ONLY the `quality` (and derived `final`)
+#              gates. Authorization (commit/push) gates are evaluated at their own
+#              downstream stages and MUST NOT influence the final quality decision.
+#   describe:  human-readable purpose
+#   check:     a Python-expression-able predicate over the `state` mapping.
+#              Safe builtins are injected by the kernel (len, all, any, isinstance, and
+#              path-existence helper). Arbitrary exec is NOT used; the kernel
+#              evaluates these as guarded predicates.
+
+gates:
+  - id: gate_classified
+    stage: REQUIREMENT_CLASSIFICATION
+    category: quality
+    describe: "Automation mode MUST be one of the four allowed values, recorded with evidence."
+    check: "state.get('automation_mode') in ['REGRESSION','NEW_AUTOMATION','AUTOMATION_ENHANCEMENT','AUTOMATION_FIX']"
+
+  - id: gate_impact_after_classify
+    stage: IMPACT_ANALYSIS
+    category: quality
+    describe: "Impact analysis runs AFTER classification and BEFORE coverage/branch; scope must be recorded."
+    check: "state.get('automation_mode') is not None and state.get('impact', {}).get('execution_scope') in ['TARGETED','IMPACTED_REGRESSION','FULL_REGRESSION']"
+
+  - id: gate_coverage_after_impact
+    stage: COVERAGE_DECISION
+    category: quality
+    describe: "Coverage decision finalized ONLY after impact analysis (never guesswork)."
+    check: "state.get('impact', {}).get('execution_scope') is not None and state.get('coverage_decision') in ['SUFFICIENT','PARTIAL','MISSING','UNKNOWN']"
+
+  - id: gate_branch_derived
+    stage: BRANCH_DECISION
+    category: quality
+    describe: "REGRESSION -> NONE; UNKNOWN never branches; AUTOMATION modes record a feature/fix branch decision BEFORE modification."
+    check: "state.get('coverage_decision') != 'UNKNOWN' and (state.get('branch', {}).get('decision_valid') is True or state.get('automation_mode') == 'REGRESSION')"
+
+  - id: gate_local_clean
+    stage: LOCAL_EXECUTION
+    category: quality
+    describe: "New tests must pass with 0 failed / 0 skipped / 0 unresolved. Applies only when LOCAL_EXECUTION was actually entered (AUTOMATION modes); REGRESSION mode never enters LOCAL_EXECUTION so this gate is not required there."
+    check: "state.get('local_execution_entered') is not True or (state.get('execution', {}).get('total', 0) > 0 and state.get('execution', {}).get('exit_code', 0) == 0 and state.get('execution', {}).get('failed') == 0 and state.get('execution', {}).get('skipped') == 0 and state.get('execution', {}).get('unresolved') == 0)"
+
+  - id: gate_healing_cap
+    stage: HEALING
+    category: quality
+    describe: "Healing allowed ONLY for AUTOMATION modes, capped at 3, counter is orchestrator-owned. Applies only when failures actually occurred (failure_classifications recorded); a clean run with no failures never requires this gate."
+    check: "not (state.get('failure_classifications') or {}) or (state.get('automation_mode') != 'REGRESSION' and state.get('healing_attempts', 0) < 3)"
+
+  - id: gate_no_heal_on_flake_or_environment
+    stage: HEALING
+    category: quality
+    describe: "A FLAKY / ENVIRONMENT_FAILURE / APPLICATION_DEFECT / TEST_DATA_DEFECT / UNKNOWN failure must NEVER trigger healing; only healable AUTOMATION defects may heal."
+    check: "all(c.get('healable', True) for c in (state.get('failure_classifications') or {}).values())"
+
+  - id: gate_public_demo_environment
+    stage: HEALING
+    category: quality
+    describe: "PUBLIC-DEMO PROTECTION: when the target is a public demo, any failure with concrete environment markers (auth/validate hang, page-not-rendered, network timeout, server unresponsive) MUST be classified ENVIRONMENT_FAILURE and therefore is never healable. The automation is never modified for a temporarily-unavailable public application."
+    check: "public_demo_classification_guard(state)"
+
+  - id: gate_regression_scope
+    stage: REGRESSION_EXECUTION
+    category: quality
+    describe: "FULL_REGRESSION is mandatory when triggered; a narrower scope never substitutes it."
+    check: "(state.get('impact', {}).get('full_regression_needed') is not True) or (state.get('regression', {}).get('full_run_completed') is True)"
+
+  - id: gate_regression_clean
+    stage: REGRESSION_EXECUTION
+    category: quality
+    describe: "Executed regression scope must be a REAL run (total > 0) and pass (0 failed / 0 skipped / 0 unresolved). An aborted/0-test run is never a pass."
+    check: "state.get('regression', {}).get('total', 0) > 0 and state.get('regression', {}).get('exit_code', 0) == 0 and state.get('regression', {}).get('failed') == 0 and state.get('regression', {}).get('skipped') == 0 and state.get('regression', {}).get('unresolved') == 0"
+
+  - id: gate_reviewer
+    stage: REVIEW
+    category: quality
+    describe: "Only explicit APPROVED/PASS opens the next gate; conditiona/rejected/cannot-reproduce is NOT a pass. Verdict is parsed from the REAL reviewer AgentResult, never hardcoded."
+    check: "state.get('review', {}).get('verdict') in ['APPROVED','PASS']"
+
+  - id: gate_docker_clean
+    stage: DOCKER_VALIDATION
+    category: quality
+    describe: "Docker build AND container execution must succeed (exit 0) and the Robot run inside the container must be clean (0/0/0), with output artifacts produced."
+    check: "state.get('docker', {}).get('build_exit_code') == 0 and state.get('docker', {}).get('run_exit_code') == 0 and state.get('docker', {}).get('robot_failed') == 0 and state.get('docker', {}).get('robot_skipped') == 0 and state.get('docker', {}).get('output_xml_exists') is True"
+
+  - id: gate_allure
+    stage: ALLURE_VALIDATION
+    category: quality
+    describe: "Allure results must exist, match test status, contain no credential leakage, and a report index must exist."
+    check: "state.get('allure', {}).get('results_present') is True and state.get('allure', {}).get('status_parity') is True and state.get('allure', {}).get('credential_leak') is False and state.get('allure', {}).get('report_index_exists') is True"
+
+  - id: gate_final
+    stage: FINAL_QUALITY_GATE
+    category: final
+    describe: "ALL quality gates satisfied. Independent of commit/push: it never depends on commit.hash or push existence."
+    check: "state.get('final_gate', {}).get('all_satisfied') is True"
+
+  - id: gate_final_outcome
+    stage: FINAL_QUALITY_GATE
+    category: final
+    describe: "The final outcome is derived deterministically: GREEN only when no failures were classified. RED_* (incl. RED_ENVIRONMENT) is a legitimate reporting outcome and NEVER masquerades as a pass."
+    check: "final_outcome(state)[0] != 'GREEN' or not (state.get('failure_classifications') or {})"
+
+  - id: gate_commit_auth
+    stage: COMMIT
+    category: commit
+    describe: "COMMIT only for AUTOMATION modes, only AFTER FINAL_QUALITY_GATE=PASS, only on a Git-confirmed feature/fix branch, and only with explicit human authorization."
+    check: "state.get('automation_mode') != 'REGRESSION' and state.get('final_gate', {}).get('all_satisfied') is True and state.get('branch', {}).get('decision', '').startswith(('feature/qa-auto-','fix/qa-auto-')) and state.get('branch', {}).get('exists') is True and state.get('commit_authorized') is True"
+
+  - id: gate_commit_plan_clean
+    stage: COMMIT
+    category: commit
+    describe: "The CommitPlan must be safe (all mandatory commit gates pass), stage only requirement-owned/support files (no unrelated/excluded entries), and contain no secrets. Commit is refused otherwise."
+    check: "state.get('commit_plan', {}).get('safe') is True and state.get('commit_plan', {}).get('secrets_detected') is False and not state.get('commit_plan', {}).get('failed_gates')"
+
+  - id: gate_commit_hash_recorded
+    stage: COMMIT
+    category: commit
+    describe: "A real commit hash must be recorded after the git commit succeeds (from real git HEAD)."
+    check: "state.get('commit', {}).get('hash') is not None and len(state.get('commit', {}).get('hash') or '') >= 7"
+
+  - id: gate_push_branch
+    stage: PUSH
+    category: push
+    describe: "PUSH only the active feature/fix branch that EXISTS; never origin/main; requires a real commit hash."
+    check: "state.get('branch', {}).get('decision', '').startswith(('feature/qa-auto-','fix/qa-auto-')) and state.get('branch', {}).get('exists') is True and state.get('commit', {}).get('hash') is not None"
+
+  - id: gate_push_verified
+    stage: PUSH
+    category: push
+    describe: "Push is verified only when the remote-tracking HEAD for the branch equals the committed local HEAD (real git evidence)."
+    check: "state.get('push', {}).get('verified') is True and state.get('push', {}).get('remote_head') is not None"
+
+  - id: gate_ci_healing_cap
+    stage: CI_HEALING
+    category: ci
+    describe: "CI healing capped at 3 attempts; a commit is never re-pushed to force a run."
+    check: "state.get('ci_healing_attempts', 0) < 3"
+
+  - id: gate_ci_verified
+    stage: CI_VALIDATION
+    category: ci
+    describe: "Jenkins CI validation must be backed by real evidence (build URL + SUCCESS + 0 failed tests). An UNVERIFIED/FAIL handoff is never a pass."
+    check: "state.get('ci_validation', {}).get('status') == 'PASS' and state.get('ci_validation', {}).get('build_result') == 'SUCCESS' and state.get('ci_validation', {}).get('test_counts', {}).get('failed', 1) == 0"

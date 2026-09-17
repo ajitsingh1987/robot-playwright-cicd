@@ -1,0 +1,65 @@
+# Stage registry for the executable orchestration kernel.
+# Order of stages defines the happy-path lifecycle. Terminal/blocking states are
+# declared separately. See AGENTS.md and qa-orchestrator.md for the authoritative
+# contract; this file is the machine-readable mirror.
+
+stages:
+  - id: REQUIREMENT_RECEIVED
+    owner: KERNEL
+  - id: REQUIREMENT_CLASSIFICATION
+    owner: KERNEL
+    output: AUTOMATION_MODE
+  - id: IMPACT_ANALYSIS
+    owner: KERNEL
+    output: EXECUTION_SCOPE
+  - id: COVERAGE_DECISION
+    owner: KERNEL
+    output: COVERAGE_DECISION
+  - id: BRANCH_DECISION
+    owner: KERNEL
+    output: BRANCH
+  - id: PLANNING
+    owner: AGENT::planner
+  - id: EXPLORATION
+    owner: AGENT::playwright
+  - id: GENERATION
+    owner: AGENT::generator
+  - id: LOCAL_EXECUTION
+    owner: KERNEL
+  - id: FAILURE_ANALYSIS
+    owner: AGENT::failure-analysis
+  - id: HEALING
+    owner: AGENT::healer
+  - id: RE_EXECUTION
+    owner: KERNEL
+  - id: REGRESSION_EXECUTION
+    owner: KERNEL
+  - id: REVIEW
+    owner: AGENT::reviewer
+  - id: DOCKER_VALIDATION
+    owner: KERNEL
+  - id: ALLURE_VALIDATION
+    owner: KERNEL
+  - id: FINAL_QUALITY_GATE
+    owner: KERNEL
+  - id: COMMIT
+    owner: KERNEL
+    phase: 2
+  - id: PUSH
+    owner: KERNEL
+    phase: 2
+  - id: CI_VALIDATION
+    owner: KERNEL
+    phase: 2
+  - id: CI_HEALING
+    owner: KERNEL
+    phase: 2
+
+# Terminal / blocking states are NOT part of the linear `stages` list.
+terminal_states:
+  - COMPLETED            # REGRESSION terminator (no commit/push)
+  - PR_READY             # AUTOMATION terminator (no auto-merge, no auto-PR)
+  - CICD_LOCKED
+  - HEALING_EXHAUSTED
+  - REGRESSION_FAILURE
+  - BLOCKED

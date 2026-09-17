@@ -174,18 +174,24 @@ It must not invent locators.
 
 Responsible for determining the root cause of failures.
 
-Supported classifications:
+Supported classifications (SIX canonical categories):
 
 ```text
-TEST_DEFECT
 AUTOMATION_DEFECT
-LOCATOR_DEFECT
+TEST_DATA_DEFECT
 APPLICATION_DEFECT
-DATA_DEFECT
-ENVIRONMENT_INFRASTRUCTURE
-CONFIGURATION_DEFECT
+ENVIRONMENT_FAILURE
+FLAKY
 UNKNOWN
 ```
+
+Legacy categories (TEST_DEFECT / LOCATOR_DEFECT -> AUTOMATION_DEFECT; DATA_DEFECT /
+CONFIGURATION_DEFECT -> TEST_DATA_DEFECT; ENVIRONMENT_INFRASTRUCTURE /
+EXTERNAL_SERVICE_DEFECT -> ENVIRONMENT_FAILURE; FLAKE -> FLAKY) are translated to these
+six. Public-demo protection is a HARD rule: environment-marker failures against a public
+demo are ENVIRONMENT_FAILURE, never healable, and never a reason to modify automation.
+Final gate outcomes: GREEN / RED_AUTOMATION / RED_DATA / RED_APPLICATION / RED_ENVIRONMENT
+/ RED_FLAKY / RED_UNKNOWN; RED* is legitimate and never masquerades as a pass.
 
 ---
 
@@ -324,7 +330,7 @@ FAILURE
  ↓
 FAILURE ANALYSIS
  ↓
-LOCATOR_DEFECT
+AUTOMATION_DEFECT
  ↓
 HEALER
  ↓
@@ -338,7 +344,7 @@ FAILURE
  ↓
 FAILURE ANALYSIS
  ↓
-ENVIRONMENT_INFRASTRUCTURE
+ENVIRONMENT_FAILURE
  ↓
 SKIP HEALER
  ↓
@@ -1401,13 +1407,11 @@ Every actual test failure must pass through Failure Analysis before healing.
 Failure Analyzer must classify the failure as exactly one of:
 
 ```text
-TEST_DEFECT
 AUTOMATION_DEFECT
-LOCATOR_DEFECT
+TEST_DATA_DEFECT
 APPLICATION_DEFECT
-DATA_DEFECT
-ENVIRONMENT_INFRASTRUCTURE
-CONFIGURATION_DEFECT
+ENVIRONMENT_FAILURE
+FLAKY
 UNKNOWN
 ```
 
@@ -1441,13 +1445,15 @@ The Orchestrator must not modify automation to hide an application defect.
 
 ---
 
-# LOCATOR_DEFECT
+# AUTOMATION_DEFECT
 
 Definition:
 
-The automation cannot interact with an element because the locator is incorrect or the application DOM changed.
+The automation layer itself is incorrect: locator/selector wrong, timing/synchronization
+issue, or incorrect test-scenario/assertion logic. Merges what were previously
+`LOCATOR_DEFECT`, `TEST_DEFECT` and `AUTOMATION_DEFECT`.
 
-Evidence:
+Evidence (locator):
 
 ```text
 Element not found
@@ -1457,40 +1463,24 @@ Changed DOM structure
 Changed selector
 ```
 
-Action:
-
-```text
-HEAL
-```
-
----
-
-# AUTOMATION_DEFECT
-
-Definition:
-
-The automation/framework implementation itself is incorrect, including timing/synchronization issues.
-
 Evidence (timing/synchronization):
 
 ```text
 Timeout
 Race condition
 Element appears after interaction attempt
-Flaky behavior
 Delayed navigation
 Async content loading
 ```
 
-Evidence (implementation):
+Evidence (test/assertion logic):
 
 ```text
-Incorrect Robot keyword
-Broken Page Object
-Invalid framework reference
-Incorrect variable reference
-Bad test setup
-Incorrect automation configuration
+Assertion checks the wrong condition
+Scenario does not match business requirements
+Expected behavior defined incorrectly
+Test validates wrong user journey
+Inverted assertion logic
 ```
 
 Action:
@@ -1507,44 +1497,20 @@ Synchronization
 Retry strategy
 Navigation waits
 Element readiness
+Locators
 ```
 
-Avoid arbitrary long sleeps when a reliable condition can be used.
+Avoid arbitrary long sleeps when a reliable condition can be used. Never change business
+assertions to make a test pass.
 
 ---
 
-# TEST_DEFECT
+# TEST_DATA_DEFECT
 
 Definition:
 
-The test scenario, assertion, or expected behavior is incorrect.
-
-Examples:
-
-```text
-Assertion checks the wrong condition
-Scenario does not match business requirements
-Expected behavior defined incorrectly
-Test validates wrong user journey
-Inverted assertion logic
-Contradicts documented acceptance criteria
-```
-
-Action:
-
-```text
-HEAL if the test scenario/assertion logic is incorrect.
-```
-
-Do not change business expectations merely to make the test pass.
-
----
-
-# DATA_DEFECT
-
-Definition:
-
-The test's business data or test configuration is invalid.
+The test's business data or automation/test-data configuration is invalid. Merges what
+were previously `DATA_DEFECT` and `CONFIGURATION_DEFECT`.
 
 Examples:
 
@@ -1555,60 +1521,43 @@ Incorrect test parameter
 Wrong expected test data
 Expired credentials
 Incorrect environment data
+Wrong base URL configuration
+Incorrect browser configuration
+Misconfigured Allure listener
+Incorrect environment variables
 ```
 
 Action:
 
 ```text
-HEAL only if it is an automation/test-data configuration issue.
+HEAL only if it is an automation/test-data configuration issue and the
+correction is deterministic and never alters business expectations.
 ```
 
 Do not change business expectations merely to make the test pass.
 
 ---
 
-# CONFIGURATION_DEFECT
+# ENVIRONMENT_FAILURE
 
 Definition:
 
-The automation framework, test runner, or environment configuration is incorrect.
-
-Examples:
-
-```text
-Wrong base URL configuration
-Incorrect browser configuration
-Misconfigured Allure listener
-Incorrect environment variables
-Wrong framework settings
-Misconfigured Docker environment
-```
-
-Action:
-
-```text
-HEAL if the configuration can be safely corrected.
-```
-
----
-
-# ENVIRONMENT_INFRASTRUCTURE
-
-Definition:
-
-The test environment prevents valid execution.
+The execution environment prevents valid execution. Merges what were previously
+`ENVIRONMENT_INFRASTRUCTURE`, `ENVIRONMENT_DEFECT` and `EXTERNAL_SERVICE_DEFECT`.
 
 Examples:
 
 ```text
 Browser unavailable
 Missing dependency
-Network outage
-Application unavailable
+Network outage / network timeout
+Application unavailable / page never renders
+/auth/validate (or any server request) hangs and never completes
+Server unresponsive
 Unsupported runtime
-Missing system dependency
 Container problem
 Jenkins agent problem
+Public demo periodically unresponsive
 ```
 
 Action:
@@ -1617,6 +1566,28 @@ Action:
 DO NOT HEAL TEST LOGIC
 REPORT ENVIRONMENT PROBLEM
 ```
+
+Public-demo protection (HARD): against a public demo, an environment-marker failure is
+classified ENVIRONMENT_FAILURE on first occurrence, is never healable, and never becomes
+a reason to change a locator, assertion or wait.
+
+---
+
+# FLAKY
+
+Definition:
+
+Repeated execution shows INCONSISTENT results (full-run FAIL, isolated PASS, ...). A
+single timeout is NEVER sufficient evidence.
+
+Action:
+
+```text
+DO NOT HEAL
+REPORT
+```
+
+A flake is never converted into PASS and never triggers healing.
 
 ---
 
@@ -1647,28 +1618,30 @@ IF failure = APPLICATION_DEFECT
     → SKIP HEALER
     → REPORT
 
-ELSE IF failure = LOCATOR_DEFECT
-    → INVOKE HEALER
+ELSE IF failure = ENVIRONMENT_FAILURE
+    → SKIP HEALER (incl. public demo)
+    → REPORT
+
+ELSE IF failure = FLAKY
+    → SKIP HEALER
+    → REPORT
 
 ELSE IF failure = AUTOMATION_DEFECT
     → INVOKE HEALER
+    (covers locator / synchronization / test-scenario-assertion / framework misuse)
 
-ELSE IF failure = TEST_DEFECT
-    → INVOKE HEALER when test-scenario/assertion logic is the cause
-
-ELSE IF failure = DATA_DEFECT
+ELSE IF failure = TEST_DATA_DEFECT
     → INVOKE HEALER only when automation/test-data configuration is the cause
-
-ELSE IF failure = CONFIGURATION_DEFECT
-    → INVOKE HEALER when configuration can be safely corrected
-
-ELSE IF failure = ENVIRONMENT_INFRASTRUCTURE
-    → SKIP HEALER
-    → REPORT
+    and the correction is deterministic
 
 ELSE IF failure = UNKNOWN
     → PERFORM ADDITIONAL ANALYSIS
 ```
+
+The final-gate outcome is derived deterministically from the recorded classifications:
+GREEN / RED_AUTOMATION / RED_DATA / RED_APPLICATION / RED_ENVIRONMENT / RED_FLAKY /
+RED_UNKNOWN. A RED_* outcome is legitimate and NEVER a pass; RED_ENVIRONMENT is the
+correct outcome when the public demo blocked the run and must not be relabeled GREEN.
 
 ---
 
@@ -1679,7 +1652,7 @@ Authentication failures require careful analysis.
 Do NOT automatically classify a login failure as:
 
 ```text
-DATA_DEFECT
+TEST_DATA_DEFECT
 ```
 
 or:
@@ -1711,7 +1684,7 @@ Configuration/environment issue
 If business test data is invalid:
 
 ```text
-DATA_DEFECT
+TEST_DATA_DEFECT
 ```
 
 If valid credentials are rejected by the application and the evidence supports an application problem:

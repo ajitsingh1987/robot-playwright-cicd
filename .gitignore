@@ -11,6 +11,7 @@ log.html
 report.html
 output.xml
 playwright-log.txt
+playwright-log-*.txt
 
 .pytest_cache/
 
@@ -19,3 +20,9 @@ evidence/
 .playwright-mcp/
 *.tmp
 *.swp
+
+# Root-level generated evidence, screenshots and exploration dumps
+# (must never be committed)
+/*.png
+/*.yml
+NUL.*

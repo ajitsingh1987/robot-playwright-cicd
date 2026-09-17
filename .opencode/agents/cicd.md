@@ -683,12 +683,17 @@ Do not solve an infrastructure defect by modifying test logic.
 When the Orchestrator asks the CI/CD Agent to investigate a failure, determine whether the failure is related to:
 
 ```text
-ENVIRONMENT_INFRASTRUCTURE
+ENVIRONMENT_FAILURE
 AUTOMATION_DEFECT
-DATA_DEFECT
+TEST_DATA_DEFECT
 CI/CD_CONFIGURATION
 APPLICATION_DEFECT
 ```
+
+Legacy ENVIRONMENT_INFRASTRUCTURE / EXTERNAL_SERVICE_DEFECT and DATA_DEFECT are reported
+under ENVIRONMENT_FAILURE and TEST_DATA_DEFECT respectively. In CI/CD, an environment or
+infrastructure failure is NEVER healed by editing tests, pages, Jenkinsfile or Dockerfile;
+report it so the infrastructure owner acts.
 
 Examples of CI/CD/environment problems:
 

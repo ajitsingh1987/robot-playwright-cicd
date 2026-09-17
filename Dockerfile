@@ -24,8 +24,13 @@ RUN apt-get update && \
     libgbm1 \
     libasound2 \
     libpango-1.0-0 \
+    libpangocairo-1.0-0 \
     libcairo2 \
+    libcairo-gobject2 \
     libatspi2.0-0 \
+    libgtk-3-0 \
+    libgdk-pixbuf-2.0-0 \
+    libxcursor1 \
     fonts-liberation \
     && \
     curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
@@ -45,5 +50,6 @@ RUN rfbrowser init
 # Copy project files
 COPY . .
 
-# Run Robot Framework tests (results + allure-results written under /app/results)
-CMD ["python", "-m", "robot", "--outputdir", "results", "--listener", "allure_robotframework:results/allure-results", "tests"]
+# Run deterministic framework tests before Robot. A broken orchestrator must never
+# be hidden by a browser-only result.
+CMD ["sh", "-c", "rm -rf results/run && mkdir -p results/run/allure-results && python -m pytest orchestra/tests -q && python -m orchestra arch && python -m robot --outputdir results/run --listener allure_robotframework:results/run/allure-results tests"]

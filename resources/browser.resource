@@ -8,7 +8,7 @@ Start Browser
 
 Start Isolated Context
     New Context
-    Set Browser Timeout    60 seconds    scope=Test
+    Set Browser Timeout    60 seconds
 
 Open Page
     [Arguments]    ${url}

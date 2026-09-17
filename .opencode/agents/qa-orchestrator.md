@@ -140,6 +140,9 @@ BLOCKED
   failures are never auto-healed and never auto-converted into AUTOMATION_FIX.
 * HEALING is capped at 3 attempts; after the 3rd failed attempt the state is HEALING_EXHAUSTED
   and the workflow STOPS (no 4th attempt).
+* Restarting a lifecycle from REQUIREMENT_RECEIVED is FORBIDDEN. Always use
+  `Kernel.resume(run_id)` to hydrate from the JSONL log. Creating a fresh
+  `StateStore(next_run_id())` when a prior run's log exists is a loop violation.
 
 ## 2.3 Allowed Transitions
 
@@ -514,18 +517,24 @@ BLOCK if:
 
 ```text
 PASS when:
-  - Every failure classified into exactly one category
-  - Classification categories:
-      TEST_DEFECT
+  - Every failure classified into exactly one of the SIX canonical categories:
       AUTOMATION_DEFECT
-      LOCATOR_DEFECT
+      TEST_DATA_DEFECT
       APPLICATION_DEFECT
-      DATA_DEFECT
-      ENVIRONMENT_INFRASTRUCTURE
-      CONFIGURATION_DEFECT
+      ENVIRONMENT_FAILURE
+      FLAKY
       UNKNOWN
+      (legacy TEST_DEFECT / LOCATOR_DEFECT -> AUTOMATION_DEFECT;
+       DATA_DEFECT / CONFIGURATION_DEFECT -> TEST_DATA_DEFECT;
+       ENVIRONMENT_INFRASTRUCTURE / ENVIRONMENT_DEFECT /
+       EXTERNAL_SERVICE_DEFECT -> ENVIRONMENT_FAILURE;
+       FLAKE / TRANSIENT_FAILURE -> FLAKY)
   - Evidence provided for each classification
   - Healing eligibility determined
+  - PUBLIC DEMO PROTECTION: when the target is a public demo and the evidence
+    carries an environment marker (page not rendered, /auth/validate hang, network
+    timeout, server unresponsive), the failure MUST be classified ENVIRONMENT_FAILURE
+    and MUST NEVER be healed or "fixed" with an automation change
 ```
 
 ## 4.7 HEALING Gate
@@ -1465,12 +1474,12 @@ Example (illustrative only — do not hardcode; always calculate from repository
 ```text
 Requirement: "Test OrangeHRM logout functionality end-to-end"
 affected_areas:          Authentication, Logout
-changed_artifacts:       tests/logout.robot, pages/orangehrm_logout_page.robot
-impacted_tests:          tests/logout.robot
+changed_artifacts:       tests/orangehrm_logout.robot, pages/orangehrm_logout_page.robot
+impacted_tests:          tests/orangehrm_logout.robot
 execution_scope:         TARGETED
 scope_decision_reason:   Only the requirement-owned logout suite references the changed POM; no
                          shared resource, keyword, authentication artifact, or multi-suite data source was touched.
-scope_evidence:          imports verified: tests/logout.robot → pages/orangehrm_logout_page.robot;
+scope_evidence:          imports verified: tests/orangehrm_logout.robot → pages/orangehrm_logout_page.robot;
                          no other suite imports that POM.
 full_regression_needed:  NO
 impact_confidence:       HIGH
@@ -1715,18 +1724,19 @@ previous_healing_attempts: <attempt count, history>
 
 ### 13.1 Classification Categories
 
-Classify each failure into exactly one:
+Classify each failure into exactly one of the SIX canonical categories:
 
 ```text
-TEST_DEFECT
 AUTOMATION_DEFECT
-LOCATOR_DEFECT
+TEST_DATA_DEFECT
 APPLICATION_DEFECT
-DATA_DEFECT
-ENVIRONMENT_INFRASTRUCTURE
-CONFIGURATION_DEFECT
+ENVIRONMENT_FAILURE
+FLAKY
 UNKNOWN
 ```
+
+Legacy names (TEST_DEFECT / LOCATOR_DEFECT / DATA_DEFECT / CONFIGURATION_DEFECT /
+ENVIRONMENT_INFRASTRUCTURE / FLAKE / ...) are translated to these six.
 
 Do not assume every failure is an automation defect.
 
@@ -1745,14 +1755,13 @@ Use:
 ### 13.3 Healing Eligibility
 
 ```text
-LOCATOR_DEFECT          → HEAL
-AUTOMATION_DEFECT       → HEAL
-DATA_DEFECT             → HEAL (if automation/test-data config issue)
-TEST_DEFECT             → HEAL (if automation-layer issue)
-APPLICATION_DEFECT      → DO NOT HEAL, REPORT
-ENVIRONMENT_INFRASTRUCTURE → DO NOT HEAL, REPORT
-CONFIGURATION_DEFECT    → HEAL (if safe)
-UNKNOWN                 → INVESTIGATE
+AUTOMATION_DEFECT     → HEAL
+TEST_DATA_DEFECT      → HEAL (only if automation/test-data config issue,
+                               deterministic, business expectations preserved)
+APPLICATION_DEFECT    → DO NOT HEAL, REPORT
+ENVIRONMENT_FAILURE   → DO NOT HEAL, REPORT  (public demo = NEVER an automation fix)
+FLAKY                 → DO NOT HEAL, REPORT
+UNKNOWN               → INVESTIGATE
 ```
 
 ### 13.4 Gate Decision
@@ -2151,6 +2160,58 @@ Record the BLOCKED_REASON.
 Report what is needed to unblock.
 Do not continue downstream stages.
 ```
+
+---
+
+# 22A. LIFECYCLE RESUME / RESTART POLICY (MANDATORY)
+
+The orchestrator has an in-memory state + append-only JSONL log (state.py). When
+the session restarts or an error interrupts the lifecycle, the orchestrator MUST
+resume from the persisted state instead of creating a fresh Kernel and restarting
+from REQUIREMENT_RECEIVED.
+
+## How to resume (the ONLY safe restart)
+
+```python
+from orchestra.kernel import Kernel
+k = Kernel.resume(run_id)   # replays JSONL, restores snapshot, increments restart_count
+```
+
+`Kernel.resume()` reads the append-only JSONL log for `run_id` and reconstructs
+the exact materialized state snapshot (current stage, all recorded evidence,
+gate results, agent outputs). It increments `restart_count` and enforces
+`MAX_RESUMES = 1`. If `restart_count > 1` it raises `RuntimeError` and the
+run is BLOCKED — do NOT create a fresh `Kernel(StateStore(next_run_id()))` to
+retry.
+
+## Run-once execution guard
+
+Every lifecycle method in the kernel (`classify`, `impact`, `coverage`, `branch`,
+`record_local_execution`, `record_regression`, `invoke_agent`, `review`, `docker`,
+`allure`, `final_gate`) checks an `executed_stages` marker in state before
+executing. If the action was already executed in this run, it returns the cached
+result and does NOT re-execute the agent or re-run the test command.
+
+This guard is ONLY cleared by explicit retry transitions:
+- HEALING → calls `kernel.clear_execution_marker(...)` for the healed stage
+- RE_EXECUTION → calls `kernel.clear_all_execution_markers()`
+
+## What NOT to do
+
+- Do NOT create a fresh `StateStore(next_run_id())` when a prior run's log
+  exists. Always call `Kernel.resume(run_id)`.
+- Do NOT re-invoke an agent or re-run a test suite to "try again" without
+  first clearing the execution marker via HEALING or RE_EXECUTION.
+- Do NOT keep re-executing the same stage while waiting for a result. If
+  `invoke_agent` returned cached evidence and the state did not advance,
+  the state is already correct; proceed to the next stage.
+- Do NOT increase timeouts repeatedly. If an agent timed out, the result
+  was already recorded; diagnose the timeout cause, do not retry blindly.
+
+## BLOCKED-RESUME is forbidden
+
+If `Kernel.resume()` raises `RuntimeError("Resume cap exceeded")`, the run
+is BLOCKED. Do NOT start a new run ID. Report the BLOCKED_REASON and STOP.
 
 ---
 

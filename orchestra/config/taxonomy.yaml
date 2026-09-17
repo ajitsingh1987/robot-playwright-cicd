@@ -1,0 +1,84 @@
+# Failure taxonomy for the orchestration kernel.
+#
+# The contract requires EXACTLY SIX canonical categories. These are the ONLY
+# categories the FailureClassifier may emit and the ONLY labels the final gate
+# understands:
+#
+#   1. AUTOMATION_DEFECT    - locator/selector/synchronization/test-flow/assertion
+#                             defect in the automation itself. HEAL allowed.
+#   2. TEST_DATA_DEFECT     - invalid/missing/stale test data or test-data config.
+#                             HEAL allowed ONLY when the correction is deterministic.
+#   3. APPLICATION_DEFECT   - the application behaves incorrectly. NEVER heal; report.
+#   4. ENVIRONMENT_FAILURE  - application unavailable, page does not render,
+#                             /auth/validate hangs, network timeout, browser/infra
+#                             failure, server never completes. NEVER heal; preserve
+#                             evidence; report that certification is blocked.
+#   5. FLAKY                - inconsistent results across repeated executions
+#                             (e.g. full-run FAIL, isolated PASS). A single timeout
+#                             is NOT sufficient evidence of flakiness. NEVER heal.
+#   6. UNKNOWN              - insufficient evidence. NEVER guess; never heal.
+#
+# Legacies (TEST_DEFECT, LOCATOR_DEFECT, ENVIRONMENT_INFRASTRUCTURE, FLAKE,
+# EXTERNAL_SERVICE_DEFECT, ...) are translated deterministically via
+# `legacy_mapping`, so older classification artifacts stay comparable.
+
+max_healing_attempts: 3
+
+public_demo_environment: true
+
+categories:
+  - id: AUTOMATION_DEFECT
+    healable: true
+    description: >
+      The automation/framework/test implementation, locator, assertion, test flow
+      or timing/synchronization is incorrect. Replaces legacy TEST_DEFECT +
+      LOCATOR_DEFECT + AUTOMATION_DEFECT + safely-correctable CONFIGURATION_DEFECT.
+  - id: TEST_DATA_DEFECT
+    healable: true
+    description: >
+      The test's business data or automation/test-data configuration is invalid,
+      missing or stale. Replaces legacy DATA_DEFECT. Heal only when the data
+      correction is deterministic and never alter business expectations.
+  - id: APPLICATION_DEFECT
+    healable: false
+    description: >
+      The application itself behaves incorrectly (server error, wrong page after a
+      valid action, valid input rejected, business rule violated). DO NOT HEAL;
+      REPORT. Never hide an application defect with an automation change.
+  - id: ENVIRONMENT_FAILURE
+    healable: false
+    description: >
+      The execution environment prevents valid execution: application unavailable,
+      page does not render, /auth/validate hangs, navigation never completes,
+      network timeout, browser/infrastructure failure, public-demo server
+      unresponsive, server-side request never completes. Replaces legacy
+      ENVIRONMENT_INFRASTRUCTURE + EXTERNAL_SERVICE_DEFECT. DO NOT heal test logic,
+      DO NOT consume healing attempts; preserve evidence and report.
+  - id: FLAKY
+    healable: false
+    description: >
+      Intermittent failure demonstrated by repeated execution with inconsistent
+      results (full-run FAIL, isolated PASS, FAIL, PASS, ...). A single timeout is
+      NEVER enough evidence. A flake is NEVER converted into PASS, NEVER triggers
+      healing and NEVER unblocks the final gate while the run remains non-clean.
+  - id: UNKNOWN
+    healable: false
+    description: >
+      Insufficient evidence to determine root cause. Requires deeper analysis;
+      never guess, never auto-invoke the Healer.
+
+legacy_mapping:
+  TEST_DEFECT: AUTOMATION_DEFECT
+  LOCATOR_DEFECT: AUTOMATION_DEFECT
+  AUTOMATION_DEFECT: AUTOMATION_DEFECT
+  CONFIGURATION_DEFECT: TEST_DATA_DEFECT
+  DATA_DEFECT: TEST_DATA_DEFECT
+  APPLICATON_DEFECT: APPLICATION_DEFECT
+  APPLICATION_DEFECT: APPLICATION_DEFECT
+  ENVIRONMENT_INFRASTRUCTURE: ENVIRONMENT_FAILURE
+  ENVIRONMENT_DEFECT: ENVIRONMENT_FAILURE
+  ENVIRONMENT_FAILURE: ENVIRONMENT_FAILURE
+  EXTERNAL_SERVICE_DEFECT: ENVIRONMENT_FAILURE
+  FLAKE: FLAKY
+  TRANSIENT_FAILURE: FLAKY
+  UNKNOWN: UNKNOWN

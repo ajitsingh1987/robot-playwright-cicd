@@ -467,6 +467,7 @@ Examples:
 * Jenkins infrastructure failure
 * Missing environment variable
 * Authentication service unavailable
+* Public demo server unresponsive / /auth/validate hang / page never renders
 
 Do NOT modify the test to compensate for an infrastructure problem.
 
@@ -478,6 +479,11 @@ ROOT_CAUSE: ENVIRONMENT_FAILURE
 Action:
 Do not weaken or modify the test.
 ```
+
+Public-demo protection: the OrangeHRM 5.9 public demo is periodically unavailable for
+multi-minute windows. An ENVIRONMENT_FAILURE there is NEVER an automation defect, NEVER
+healed, NEVER consumes a healing attempt, and NEVER becomes a reason to change a locator,
+assertion or wait.
 
 ---
 
