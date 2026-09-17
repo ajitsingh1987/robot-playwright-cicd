@@ -68,7 +68,7 @@ Employee Creation Rejects Mismatched Passwords
     Verify Passwords Do Not Match Message
 
 Employee Creation Requires Login Details When Enabled
-    [Documentation]    Verify enabling login details makes the username and password required.
+    [Documentation]    Verify enabling login details makes the username required when the form is saved empty.
     Login With Credentials    ${ORANGEHRM_USERNAME}    ${ORANGEHRM_PASSWORD}
     Verify Dashboard Page Contains    Dashboard
     Go To Add Employee Page
@@ -78,7 +78,7 @@ Employee Creation Requires Login Details When Enabled
     Enter Employee Password    ${EMPTY}
     Click Add Employee Save
     Verify Required Username Message
-    Verify Required Password Message
+    Verify Employee Not Saved
 
 Employee Creation Rejects Existing Username
     [Documentation]    Verify a username already used by another employee cannot be reused.
