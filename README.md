@@ -63,3 +63,4 @@ The GitHub webhook is the only allowed trigger for the Jenkins pipeline
 AND `*/fix/qa-auto-*` (never a hard-coded branch). The pipeline builds the Docker
 image, runs the orchestrator gates, executes all Robot tests, and publishes
 Allure results.
+<!-- Jenkins webhook validation: 2026-09-21 -->
