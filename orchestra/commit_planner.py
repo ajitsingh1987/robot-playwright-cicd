@@ -18,8 +18,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from .branch_policy import is_valid_qa_branch
 from .change_intel import ChangeClassifier, ChangeReport, build_changeset, classify_excluded
 from .config import settings
+from .local_gate import affects_robot_automation, compute_worktree_fingerprint
 from .secrets import scan_for_credentials
 
 # Message subject prefixes allowed on the active feature/fix branches.
@@ -253,9 +255,7 @@ class CommitPlanner:
             # 10. Reviewer explicitly approved.
             "reviewer_approved": review.get("verdict") in ("APPROVED", "PASS"),
             # 11. Branch is a feature/fix branch (never origin/main).
-            "branch_is_feature_fix": str(branch).startswith(
-                ("feature/qa-auto-", "fix/qa-auto-")
-            ),
+            "branch_is_feature_fix": is_valid_qa_branch(branch),
             # 12. Decided branch matches the recorded branch decision.
             "branch_matches_decision": branch_dec is not None
             and (str(branch_dec) == str(branch) or branch_dec.startswith("feature/") or branch_dec.startswith("fix/")),
@@ -265,12 +265,56 @@ class CommitPlanner:
             "git_identity_configured": git_identity,
             # 15. Commit message is meaningful (never a kick/empty commit).
             "message_meaningful": message_valid,
+            # 16. LOCAL QUALITY GATE is GREEN AND its evidence still matches the
+            #     CURRENT working tree at commit time. A stale GREEN can never
+            #     authorize new/unrelated changes.
+            "local_gate_fresh": self._local_gate_fresh(state, git),
         }
 
         # Authorization consistency: an explicit automation commit authorization
         # flag is required for automation modes (gate_commit_auth mirrors this).
         gates["commit_authorized"] = commit_authorized
         return gates
+
+    def _local_gate_fresh(self, state: Dict, git) -> bool:
+        """Gate 16: ONLY a GREEN local-quality verdict bound to the CURRENT tree.
+
+        The recorded evidence (results/run/local-quality-gate.json, surfaced here
+        through the run state) must be:
+          - status == GREEN, and
+          - fingerprint == live fingerprint of the CURRENT working tree, and
+          - branch   == live active branch, and
+          - HEAD     == live current HEAD.
+
+        Because the fingerprint covers every tracked/untracked entry plus branch
+        and HEAD, any modification since the verdict (including an unrelated file,
+        a new test, or a different branch) changes the fingerprint -> gate RED ->
+        the planned commit is refused. This is the executable LOCAL-GREEN gate,
+        never a reminder.
+        """
+        recorded = state.get("local_gate") or {}
+        if not isinstance(recorded, dict):
+            return False
+        if recorded.get("status") != "GREEN":
+            return False
+        try:
+            live_fp = compute_worktree_fingerprint(git, root=self.root)
+            live_branch = git.current_branch()
+            live_head = git.head()
+            changed = [e.path for e in git.status().entries]
+        except Exception:
+            return False
+        # A Robot-affecting change may only be authorized by a GREEN that carries
+        # actual Robot execution evidence (robot_ci is True). A recorded GREEN
+        # whose robot_ci is None/False can never authorize Robot automation work.
+        checks = recorded.get("checks") or {}
+        if affects_robot_automation(changed) and checks.get("robot_ci") is not True:
+            return False
+        return (
+            recorded.get("worktree_fingerprint") == live_fp
+            and recorded.get("branch") == live_branch
+            and recorded.get("head") == live_head
+        )
 
 
 def plan_state_ready(

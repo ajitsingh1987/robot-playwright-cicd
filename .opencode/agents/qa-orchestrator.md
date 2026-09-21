@@ -682,12 +682,16 @@ PASS when:
   - Autonomous push to origin/main is FORBIDDEN and never executed
   - Push evidence captured (remote branch, remote HEAD SHA matches local)
   - GitHub webhook is configured to trigger the Jenkins job (Robot-Playwright-Sanity)
+  - Jenkins job branch selection uses the wildcard */feature/qa-auto-*
+    (and is never narrowed to a single active branch)
   - The webhook fired for this commit (Jenkins build entry observed where API access allows)
 
 BLOCK when:
   - Push fails
   - Push targets the default branch (main/master)
   - No webhook is configured
+  - Jenkins job branch selection hard-codes a single feature/qa-auto-* branch
+    (contract violation: arch validation FAILS)
   - Jenkins job is not reachable/visible to verify trigger
 ```
 
@@ -696,8 +700,12 @@ BLOCK when:
 ```text
 PASS when:
   - Jenkins job (Robot-Playwright-Sanity) executed for the new commit
-  - Checkout = new commit SHA
+  - Checkout = new commit SHA on a feature/qa-auto-* or fix/qa-auto-* branch
+  - Branch Verification stage proves checked-out branch/commit matches the push
   - Docker image built and tests executed under tests/ (discovered automatically)
+  - CI Quality Gate verdict = GREEN: parsed output.xml total > 0, Failed = 0,
+    Skipped = 0, Unresolved = 0, Allure parity holds, no credential leak
+    (artifact results/run/ci-quality-gate.json)
   - Robot Framework result: Failed = 0, Skipped = 0
   - Allure results generated (results/allure-results) and Allure report generated/published
   - Jenkins build result = SUCCESS
@@ -705,6 +713,8 @@ PASS when:
 
 BLOCK when:
   - Jenkins build result != SUCCESS
+  - Branch/commit evidence missing or checkout not on an autonomous QA branch
+  - CI Quality Gate verdict != GREEN (RED or UNVERIFIED)
   - Tests failed/skipped > 0
   - Allure results/report missing or not published
   - Jenkins/build evidence cannot be obtained
@@ -789,6 +799,10 @@ Phase 2 authorizes the Orchestrator to COMMIT and PUSH the phase's intended chan
 - DO NOT modify application deployment/release logic.
 - DO NOT enable GitHub Actions.
 - DO NOT modify GitHub webhook configuration or Jenkins job configuration automatically.
+- DO NOT narrow Jenkins job branch selection to the active feature/qa-auto-* branch:
+  the job MUST permanently use the wildcard */feature/qa-auto-*. New feature branches
+  require ZERO Jenkins configuration changes, and `python -m orchestra arch` treats a
+  narrowed/branch-specific job as a blocking gate failure.
 - DO NOT modify unrelated files.
 - DO NOT merge the feature/fix branch autonomously.
 - DO NOT create a Pull Request autonomously.

@@ -285,3 +285,66 @@ Confirmed during the Phase 1 design checkpoint:
 
 These are locked and NOT to be re-opened during Phase 2 implementation unless a hard
 technical blocker emerges.
+
+## 11. Jenkins Branch-Selection Contract (LOCKED)
+
+- Jenkins job `Robot-Playwright-Sanity` consumes every autonomous QA branch through the
+  wildcards `*/feature/qa-auto-*` AND `*/fix/qa-auto-*`.
+- The patterns are an ARCHITECTURE CONTRACT, not a temporary fix: a hard-coded single
+  branch (e.g. `feature/qa-auto-orangehrm-automation`, `*/fix/qa-auto-login`) is
+  forbidden because GitHub webhook pushes from `feature/qa-auto-admin`, `-leave`,
+  `-payroll`, `-recruitment`, `fix/qa-auto-*`, etc. would be silently ignored.
+- New `feature/qa-auto-*` / `fix/qa-auto-*` branches require ZERO Jenkins changes;
+  OpenCode never modifies Jenkins branch selection to target the active branch.
+- Regression guard: `python -m orchestra arch` (read-only) validates any discoverable
+  Jenkins `config.xml` and fails when the BranchSpec lacks `*/feature/qa-auto-*` or
+  `*/fix/qa-auto-*`, or hard-codes a QA branch. Unit-tested in
+  `orchestra/tests/test_jenkins_policy.py`.
+
+## 12. CI Quality Gate (LOCKED)
+
+- Jenkins executes a deterministic CI quality gate AFTER the Robot + Allure run. The
+  gate parses `results/run/output.xml` for the executed test counts and validates:
+  - real run (total > 0),
+  - zero failed / zero skipped / zero unresolved,
+  - Allure results present with status parity (result-file count == Robot total),
+  - no credential leakage in the Allure artifacts,
+  - (when supplied) the checked-out branch matching `feature/qa-auto-*` / `fix/qa-auto-*`
+    and a valid commit SHA — this is the EXPECTED_BRANCH == ACTUAL checkout contract.
+- Verdict: GREEN (exit 0) / RED (exit 1) / UNVERIFIED (exit 2). The verdict is exported
+  as `results/run/ci-quality-gate.json` and archived as CI evidence for the orchestrator's
+  `CI_VALIDATION` gate.
+- The gate NEVER fabricates a pass: file existence alone is insufficient; only a parsed
+  clean run with parity-verified Allure artifacts passes. Implemented in
+  `orchestra/ci_quality.py`; unit-tested in `orchestra/tests/test_ci_quality.py`;
+  driven from the CLI via `python -m orchestra ci-gate`.
+
+## 13. Local Quality Gate (LOCKED)
+
+- COMMIT/PUSH are authorized ONLY by an executable LOCAL GREEN verdict from
+  `python -m orchestra local-gate` (artifact `results/run/local-quality-gate.json`).
+- The verdict is bound to a deterministic worktree fingerprint (sha256 over, for every
+  `git status --porcelain` entry, the status code + relative path + a sha256 of the file
+  CONTENT, plus branch + HEAD). The Commit Planner's `local_gate_fresh` gate re-computes
+  the fingerprint at commit time, so a GREEN recorded for one change set can NEVER
+  authorize new, unrelated or content-modified changes.
+- The gate runs pytest, architecture validation, the deterministic machine dry-run and
+  a branch-policy check. A change touching the Robot automation surface (`tests/`,
+  `pages/`, `resources/`, `variables/`, `data/`, `*.robot`, `*.resource`) REQUIRES actual
+  Robot execution evidence: no executed Robot+Allure artifacts, or a non-GREEN CI-gate
+  verdict, makes the local gate RED. A framework-only change may defer `robot_ci` to
+  Jenkins (recorded, never claimed as verified). Any RED check keeps the run RED.
+- The ONLY wired path that performs a real commit + push is `Kernel.deliver(...)`
+  (CLI `python -m orchestra deliver --run-id <id> [--execute]`): it builds the plan via
+  `CommitPlanner.plan()` (so `local_gate_fresh` is evaluated live) and, only when the
+  plan is safe, invokes the existing executor `GitDelivery.deliver(plan, push=True,
+  dry_run=False)`. LOCAL RED / stale GREEN / missing GREEN / invalid branch refuse the
+  delivery with no git mutation.
+- Branch naming is enforced by `orchestra/branch_policy.py`
+  (`feature/qa-auto-<name>` / `fix/qa-auto-<name>`; `main`/`master` and malformed names
+  rejected; checkout verification never silently substitutes another branch). The Jenkins
+  Branch Verification stage mirrors this with cmd-safe explicit prefix slicing (never the
+  cmd wildcard substitution `%VAR:*/=%`). Implemented in `orchestra/local_gate.py`;
+  unit-tested in `orchestra/tests/test_local_gate.py`,
+  `orchestra/tests/test_branch_policy.py` and
+  `orchestra/tests/test_jenkinsfile_branch_verification.py`.

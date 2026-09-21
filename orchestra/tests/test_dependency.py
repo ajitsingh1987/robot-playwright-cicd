@@ -23,7 +23,6 @@ def test_owner_suites_are_all_discovered(analyzer: FileImpactAnalyzer):
     names = {p.name for p in analyzer.owners.owner_suites()}
     assert "orangehrm_employee_creation.robot" in names
     assert "orangehrm_login.robot" in names
-    assert "orangehrm_qa_e2e_login_logout.robot" in names
 
 
 def test_suite_own_requirement(analyzer: FileImpactAnalyzer):
@@ -90,7 +89,7 @@ def test_page_change_only_affects_its_importers(analyzer: FileImpactAnalyzer):
     affected = analyzer.affected_suites([logout_page])
     names = {p.name for p in affected}
     # Only suites that actually import the logout page object.
-    assert names == {"orangehrm_logout.robot", "orangehrm_qa_e2e_login_logout.robot"}
+    assert names == {"orangehrm_logout.robot"}
     assert "orangehrm_login.robot" not in names
 
 
@@ -99,5 +98,5 @@ def test_login_page_shared_surface_affects_all_login_suites(analyzer: FileImpact
     affected = analyzer.affected_suites([login_page])
     names = {p.name for p in affected}
     for suite in ("orangehrm_login.robot", "orangehrm_logout.robot", "orangehrm_forgot_password.robot",
-                  "orangehrm_employee_creation.robot", "orangehrm_qa_e2e_login_logout.robot"):
+                  "orangehrm_employee_creation.robot"):
         assert suite in names

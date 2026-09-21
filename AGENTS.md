@@ -110,6 +110,57 @@ The Orchestrator drives the Git -> Jenkins flow in this order:
    Git loop is forbidden, and a healing fix must not modify deployment/release
    logic, Jenkinsfile, Dockerfile, or the test architecture.
 
+5a. DETERMINISTIC CI QUALITY GATE (HARD RULE): Jenkins must run
+   `python -m orchestra ci-gate` after the Robot + Allure execution and exit 0
+   ONLY when the parsed output.xml shows a real run (total > 0) with zero
+   failed / zero skipped / zero unresolved, Allure status parity holds, no
+   credential leak is present, and the checked-out branch matches
+   feature/qa-auto-* / fix/qa-auto-* with a valid commit SHA. File-existence
+   checks are NEVER a substitute for the parsed verdict. The verdict artifact
+   results/run/ci-quality-gate.json is the evidence that backs CI_VALIDATION.
+   Implemented in `orchestra/ci_quality.py`; enforced in Jenkinsfile
+   "CI Quality Gate" stage; unit-tested in
+   `orchestra/tests/test_ci_quality.py`.
+
+6. JENKINS BRANCH-SELECTION CONTRACT (HARD RULE): Jenkins job
+   Robot-Playwright-Sanity ALWAYS consumes the wildcard patterns
+   `*/feature/qa-auto-*` AND `*/fix/qa-auto-*`. NEVER hard-code a single
+   feature/fix branch (such as `feature/qa-auto-orangehrm-automation` or
+   `*/fix/qa-auto-login`) in Jenkins branch selection. Every `feature/qa-auto-*`
+   and `fix/qa-auto-*` branch (admin, leave, payroll, recruitment, user
+   management, ...) must follow the SAME CI/CD path with ZERO Jenkins
+   configuration changes. New feature/fix branches must NEVER require a Jenkins
+   job edit. Created branches must never be added to Jenkins, and OpenCode must
+   never modify Jenkins job configuration to target only the active branch. A
+   Jenkins job edit that narrows either pattern to one branch is a blocking gate
+   failure; `python -m orchestra arch` enforces this rule when a Jenkins config
+   is discoverable.
+
+7. LOCAL QUALITY GATE (HARD RULE): COMMIT/PUSH are authorized ONLY by an
+   executable LOCAL GREEN verdict produced by `python -m orchestra local-gate`
+   (`results/run/local-quality-gate.json`). The verdict is bound to a
+   deterministic worktree fingerprint (sha256 over every status entry's code +
+   relative path + file CONTENT hash, plus branch + HEAD), and the Commit
+   Planner's `local_gate_fresh` gate re-computes that fingerprint at commit
+   time, so a stale GREEN can NEVER authorize new, unrelated or content-modified
+   changes. LOCAL RED, a stale verdict, or a missing verdict blocks COMMIT/PUSH.
+   A change touching the Robot automation surface (tests/, pages/, resources/,
+   variables/, data/, *.robot, *.resource) is NEVER GREEN without actual Robot
+   execution evidence: no executed Robot+Allure artifacts (or a non-GREEN
+   CI-gate verdict) makes the local gate RED. Branch names are validated by
+   `orchestra/branch_policy.py`; implemented in `orchestra/local_gate.py`;
+   unit-tested in `orchestra/tests/test_local_gate.py` and
+   `orchestra/tests/test_branch_policy.py`.
+
+7a. PRODUCTION COMMIT/PUSH WIRING (HARD RULE): the only wired path that performs a
+   REAL `git commit` + `git push` is `Kernel.deliver(...)` (CLI:
+   `python -m orchestra deliver --run-id <id> [--execute]`), which calls
+   `CommitPlanner.plan()` (evaluating `local_gate_fresh` live) and, ONLY when the
+   plan is safe, the existing executor `GitDelivery.deliver(plan, push=True,
+   dry_run=False)`. LOCAL RED / stale GREEN / missing GREEN / invalid branch =>
+   unsafe plan => NO stage, NO commit, NO push. Unit-tested in
+   `orchestra/tests/test_delivery.py`.
+
 ---
 
 ## 5. Test File Ownership Rule (ONE REQUIREMENT -> ONE TEST FILE)

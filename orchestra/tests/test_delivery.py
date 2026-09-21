@@ -23,6 +23,7 @@ from orchestra.evidence import EvidenceBus
 from orchestra.gates import GateEngine
 from orchestra.git_delivery import GitDelivery
 from orchestra.kernel import Kernel
+from orchestra.local_gate import compute_worktree_fingerprint
 from orchestra.machine import StageRegistry
 from orchestra.scope import ImpactDecision
 from orchestra.state import StateStore
@@ -118,9 +119,17 @@ class FakeGit:
         self._entries = entries or []
         self._branch_exists = True
         self._config = {"user.name": "Tester", "user.email": "t@example.com"}
+        self._branch = "feature/qa-auto-login"
+        self._head = "0" * 40
 
     def status(self) -> GitStatus:
         return GitStatus(entries=list(self._entries))
+
+    def current_branch(self) -> str:
+        return self._branch
+
+    def head(self) -> str:
+        return self._head
 
     def config_set(self, key: str) -> bool:
         return self._config.get(key, False)
@@ -130,6 +139,25 @@ class FakeGit:
 
     def ls_remote(self, branch: str, remote: str = "origin"):
         return "0" * 40
+
+
+def local_gate_evidence(git, root=None, robot_ci=True) -> dict:
+    """GREEN local-gate evidence bound EXACTLY to the given FakeGit tree.
+
+    The planner entries in this module are Robot-affecting (`tests/*.robot`), so a
+    genuine GREEN must carry Robot execution evidence: robot_ci defaults to True.
+    """
+    return {
+        "status": "GREEN",
+        "branch": git.current_branch(),
+        "head": git.head(),
+        "worktree_fingerprint": compute_worktree_fingerprint(git, root=root),
+        "checks": {
+            "pytest": True, "arch": True, "dry_run": True,
+            "branch_policy": True, "robot_ci": robot_ci,
+        },
+        "reasons": [],
+    }
 
 
 def clean_snapshot() -> dict:
@@ -144,6 +172,13 @@ def clean_snapshot() -> dict:
         "healing_attempts": 0,
         "commit_authorized": True,
     }
+
+
+def snapshot_for(git, root=None) -> dict:
+    """clean_snapshot() + local-gate evidence bound to the FakeGit tree."""
+    state = clean_snapshot()
+    state["local_gate"] = local_gate_evidence(git, root=root)
+    return state
 
 
 def planner_entries() -> list:
@@ -175,7 +210,7 @@ def test_planner_safe_when_all_gates_pass(tmp_path):
         requirement="login",
         automation_mode="NEW_AUTOMATION",
         branch="feature/qa-auto-login",
-        state=clean_snapshot(),
+        state=snapshot_for(git, root=tmp_path),
         git=git,
         test_file="tests/orangehrm_login.robot",
     )
@@ -219,6 +254,44 @@ def test_planner_blocks_when_final_gate_not_passed(tmp_path):
     )
     assert plan.safe is False
     assert "final_quality_gate_pass" in plan.failed_gates
+
+
+def test_planner_blocks_stale_local_gate(tmp_path):
+    """A GREEN recorded for one change set must never authorize a different one."""
+    planner = CommitPlanner(root=tmp_path)
+    git = FakeGit(entries=planner_entries())
+    state = snapshot_for(git, root=tmp_path)
+    # The tree changes after the GREEN was recorded (e.g. an unrelated file is
+    # edited): the fingerprint no longer matches -> local_gate_fresh must fail.
+    git._entries = [
+        GitStatusEntry(index="M", worktree=" ", path="tests/orangehrm_login.robot"),
+        GitStatusEntry(index="M", worktree=" ", path="Jenkinsfile"),
+    ]
+    plan = planner.plan(
+        requirement="login",
+        automation_mode="NEW_AUTOMATION",
+        branch="feature/qa-auto-login",
+        state=state,
+        git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert plan.safe is False
+    assert "local_gate_fresh" in plan.failed_gates
+
+
+def test_planner_blocks_when_local_gate_missing(tmp_path):
+    planner = CommitPlanner(root=tmp_path)
+    git = FakeGit(entries=planner_entries())
+    plan = planner.plan(
+        requirement="login",
+        automation_mode="NEW_AUTOMATION",
+        branch="feature/qa-auto-login",
+        state=clean_snapshot(),  # no local_gate evidence recorded
+        git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert plan.safe is False
+    assert "local_gate_fresh" in plan.failed_gates
 
 
 def test_planner_blocks_secret_content(tmp_path):
@@ -270,7 +343,7 @@ def test_delivery_dry_run_never_stages_or_commits(tmp_path):
         requirement="login",
         automation_mode="NEW_AUTOMATION",
         branch="feature/qa-auto-login",
-        state=clean_snapshot(),
+        state=snapshot_for(git, root=tmp_path),
         git=git,
         test_file="tests/orangehrm_login.robot",
     )
@@ -314,7 +387,7 @@ def test_delivery_requires_exact_plan_staging(tmp_path):
         requirement="login",
         automation_mode="NEW_AUTOMATION",
         branch="feature/qa-auto-login",
-        state=clean_snapshot(),
+        state=snapshot_for(gg, root=tmp_path),
         git=gg,
         test_file="tests/orangehrm_login.robot",
     )
@@ -323,6 +396,188 @@ def test_delivery_requires_exact_plan_staging(tmp_path):
     attempt = delivery.deliver(plan)
     assert attempt.committed is False
     assert any("staged_mismatch" in r for r in attempt.reasons)
+
+
+# ── local-gate freshness: content / branch / HEAD staleness ───────────────
+def test_planner_blocks_content_only_change_after_green(tmp_path):
+    """A content-only edit (same entry set, branch and HEAD) invalidates GREEN."""
+    planner = CommitPlanner(root=tmp_path)
+    f = tmp_path / "tests" / "orangehrm_login.robot"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("*** Test Cases ***\nFirst\n", encoding="utf-8")
+    git = FakeGit(entries=planner_entries())
+    state = snapshot_for(git, root=tmp_path)
+    f.write_text("*** Test Cases ***\nSecond\n", encoding="utf-8")
+    plan = planner.plan(
+        requirement="login",
+        automation_mode="NEW_AUTOMATION",
+        branch="feature/qa-auto-login",
+        state=state,
+        git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert plan.safe is False
+    assert "local_gate_fresh" in plan.failed_gates
+
+
+def test_planner_blocks_branch_change_after_green(tmp_path):
+    planner = CommitPlanner(root=tmp_path)
+    git = FakeGit(entries=planner_entries())
+    state = snapshot_for(git, root=tmp_path)
+    git._branch = "feature/qa-auto-other"
+    plan = planner.plan(
+        requirement="login",
+        automation_mode="NEW_AUTOMATION",
+        branch="feature/qa-auto-other",
+        state=state,
+        git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert plan.safe is False
+    assert "local_gate_fresh" in plan.failed_gates
+
+
+def test_planner_blocks_head_change_after_green(tmp_path):
+    planner = CommitPlanner(root=tmp_path)
+    git = FakeGit(entries=planner_entries())
+    state = snapshot_for(git, root=tmp_path)
+    git._head = "f" * 40
+    plan = planner.plan(
+        requirement="login",
+        automation_mode="NEW_AUTOMATION",
+        branch="feature/qa-auto-login",
+        state=state,
+        git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert plan.safe is False
+    assert "local_gate_fresh" in plan.failed_gates
+
+
+def test_planner_blocks_robot_change_without_robot_evidence(tmp_path):
+    """A Robot-affecting change is never authorized by a GREEN with robot_ci=None."""
+    planner = CommitPlanner(root=tmp_path)
+    git = FakeGit(entries=planner_entries())
+    state = clean_snapshot()
+    state["local_gate"] = local_gate_evidence(git, root=tmp_path, robot_ci=None)
+    plan = planner.plan(
+        requirement="login",
+        automation_mode="NEW_AUTOMATION",
+        branch="feature/qa-auto-login",
+        state=state,
+        git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert plan.safe is False
+    assert "local_gate_fresh" in plan.failed_gates
+
+
+# ── production delivery chain (Kernel.deliver) ────────────────────────────
+class DeliveryFakeGit(FakeGit):
+    """FakeGit extended with the mutating surface GitDelivery needs, recording calls."""
+
+    def __init__(self, entries=None):
+        super().__init__(entries=entries)
+        self.calls = []
+        self._committed = "d" * 40
+
+    def stage(self, paths):
+        self.calls.append(("stage", list(paths)))
+        return paths
+
+    def staged_paths(self):
+        return [e.path for e in self._entries]
+
+    def diff_cached(self):
+        return ""
+
+    def commit(self, message):
+        self.calls.append(("commit", message))
+        return self._committed
+
+    def push(self, branch, remote="origin"):
+        self.calls.append(("push", branch, remote))
+        return "pushed"
+
+    def ls_remote(self, branch, remote="origin"):
+        return self._committed
+
+    def verify_push(self, branch, local_head, remote="origin"):
+        return local_head == self._committed
+
+    def mutating_calls(self):
+        return [c for c in self.calls if c[0] in ("stage", "commit", "push")]
+
+
+def _walk_to_deliverable(k: Kernel, git, *, record_gate=True, robot_ci=True) -> None:
+    _walk_to_final_gate(k)
+    k.authorize_commit(True)
+    if record_gate:
+        k.store.record(
+            "local_gate", local_gate_evidence(git, robot_ci=robot_ci)
+        )
+
+
+def test_kernel_deliver_missing_green_blocks_commit_and_push():
+    git = DeliveryFakeGit(entries=planner_entries())
+    store = StateStore("deliver-red-0001")
+    k = Kernel(store=store)
+    _walk_to_deliverable(k, git, record_gate=False)
+    attempt = k.deliver(
+        requirement="login", automation_mode="NEW_AUTOMATION", git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert attempt.delivered is False
+    assert any("unsafe_plan" in r for r in attempt.reasons)
+    assert git.mutating_calls() == []
+    assert store.current_state() == "FINAL_QUALITY_GATE"
+
+
+def test_kernel_deliver_stale_green_blocks_commit_and_push():
+    git = DeliveryFakeGit(entries=planner_entries())
+    store = StateStore("deliver-red-0002")
+    k = Kernel(store=store)
+    _walk_to_deliverable(k, git)
+    git._head = "f" * 40  # HEAD moved after the GREEN was recorded
+    attempt = k.deliver(
+        requirement="login", automation_mode="NEW_AUTOMATION", git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert attempt.delivered is False
+    assert git.mutating_calls() == []
+    assert store.current_state() == "FINAL_QUALITY_GATE"
+
+
+def test_kernel_deliver_fresh_green_invokes_gitdelivery():
+    git = DeliveryFakeGit(entries=planner_entries())
+    store = StateStore("deliver-green-0001")
+    k = Kernel(store=store)
+    _walk_to_deliverable(k, git)
+    attempt = k.deliver(
+        requirement="login", automation_mode="NEW_AUTOMATION", git=git,
+        test_file="tests/orangehrm_login.robot",
+    )
+    assert attempt.delivered is True
+    kinds = [c[0] for c in git.calls]
+    assert "commit" in kinds and "push" in kinds
+    assert store.current_state() == "PUSH"
+    assert store.get("commit")["hash"] == "d" * 40
+    assert store.get("push")["verified"] is True
+
+
+def test_kernel_deliver_dry_run_never_mutates_git():
+    git = DeliveryFakeGit(entries=planner_entries())
+    store = StateStore("deliver-green-0002")
+    k = Kernel(store=store)
+    _walk_to_deliverable(k, git)
+    attempt = k.deliver(
+        requirement="login", automation_mode="NEW_AUTOMATION", git=git,
+        test_file="tests/orangehrm_login.robot", dry_run=True,
+    )
+    assert attempt.dry_run is True
+    assert attempt.committed is False
+    assert git.mutating_calls() == []
+    assert store.current_state() == "FINAL_QUALITY_GATE"
 
 
 # ── CI Handoff / Delivery Verifier ────────────────────────────────────────

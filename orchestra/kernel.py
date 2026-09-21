@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Set
 
 from .adapters.agent_cli import AgentCLI, AgentResult
+from .branch_policy import is_valid_qa_branch
 from .config import settings
 from .evidence import EvidenceBus
 from .failure import FailureClassification, FailureClassifier, FailureEvidence
@@ -237,11 +238,10 @@ class Kernel:
                 },
             )
         else:
-            if not name or not name.startswith(
-                ("feature/qa-auto-", "fix/qa-auto-")
-            ):
+            if not name or not is_valid_qa_branch(name):
                 raise ValueError(
-                    f"Invalid feature/fix branch name for {mode}: {name!r}"
+                    f"Invalid feature/fix branch name for {mode}: {name!r} "
+                    "(must be feature/qa-auto-<name> or fix/qa-auto-<name>)"
                 )
             self.store.record(
                 "branch",
@@ -538,6 +538,72 @@ class Kernel:
         self._assert_gate("gate_push_branch")
         self._assert_gate("gate_push_verified")
         self._mark_executed("push")
+
+    # -- production git delivery (commit + push) --------------------------------
+    def deliver(
+        self,
+        *,
+        requirement: str,
+        automation_mode: str,
+        git: Any = None,
+        push: bool = True,
+        dry_run: bool = False,
+        remote: str = "origin",
+        **plan_kwargs: Any,
+    ) -> Any:
+        """PRODUCTION commit/push path: CommitPlanner -> local_gate_fresh -> GitDelivery.
+
+        This is the ONLY wired path that performs a REAL git commit/push. It builds
+        the CommitPlan from the LIVE working tree + the recorded quality snapshot so
+        that every mandatory gate (including `local_gate_fresh`, which re-computes
+        the worktree fingerprint) is evaluated at delivery time, records the plan,
+        and ONLY when the plan is safe invokes the existing executor
+        `GitDelivery.deliver(plan, push=..., dry_run=...)`.
+
+        Governance (all enforced before any git mutation):
+          - LOCAL GREEN + fresh local-gate evidence (gate local_gate_fresh),
+          - valid feature/fix branch (gate branch_is_feature_fix),
+          - recorded explicit authorization (gate commit_authorized),
+          - current HEAD/worktree fingerprint matching the GREEN evidence.
+
+        LOCAL RED / STALE GREEN / MISSING GREEN / INVALID BRANCH => plan.safe is
+        False => NO stage, NO commit, NO push. A real commit/push additionally
+        requires dry_run=False. Returns the DeliveryAttempt (never fabricated).
+        """
+        from .adapters.git import GitAdapter
+        from .commit_planner import CommitPlanner
+        from .git_delivery import DeliveryAttempt, GitDelivery
+
+        git = git or GitAdapter()
+        branch = (self.store.get("branch") or {}).get("decision")
+        planner = CommitPlanner()
+        plan = planner.plan(
+            requirement=requirement,
+            automation_mode=automation_mode,
+            branch=branch,
+            state=self.store.snapshot(),
+            git=git,
+            dry_run=dry_run,
+            **plan_kwargs,
+        )
+        self.record_commit_plan(plan)
+        if not plan.safe:
+            return DeliveryAttempt(
+                dry_run=dry_run,
+                reasons=[f"unsafe_plan: {plan.failed_gates or 'empty file list'}"],
+            )
+        attempt = GitDelivery(git=git).deliver(
+            plan, push=push, dry_run=dry_run, remote=remote
+        )
+        if attempt.commit_hash:
+            self.commit(attempt.commit_hash, staged_files=attempt.staged_paths)
+            if push:
+                self.push(
+                    verified=attempt.pushed_verified,
+                    remote_head=attempt.remote_head,
+                    branch=plan.branch,
+                )
+        return attempt
 
     # -- Phase 2 CI validation / healing ---------------------------------------
     def ci_validation(self, status: str, build_result: Optional[str] = None,

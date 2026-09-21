@@ -13,10 +13,13 @@ from pathlib import Path
 
 from .adapters.git import GitAdapter
 from .change_intel import ChangeClassifier
+from .ci_quality import CIQualityGate
 from .commit_planner import CommitPlanner
 from .evidence import EvidenceBus
 from .gates import GateEngine
+from .jenkins_policy import validate_jenkins_branch_policy
 from .kernel import Kernel
+from .local_gate import load_verdict, run_local_gate, export_verdict
 from .machine import StageRegistry
 from .scope import ImpactDecision
 from .state import StateStore, next_run_id
@@ -103,6 +106,14 @@ def architecture_validate() -> int:
     if not legacy_vals.issubset(canonical):
         failures.append("taxonomy legacy_mapping references unknown category")
 
+    # Jenkins QA branch-selection contract: the job MUST target the wildcard
+    # */feature/qa-auto-* and MUST NEVER hard-code a single QA feature branch.
+    # Read-only; checks every discoverable Jenkins config.xml (env override or
+    # live job path). No config on this host -> passes silently (unit-tested).
+    jenkins_violations = validate_jenkins_branch_policy()
+    for violation in jenkins_violations:
+        failures.append(violation)
+
     if failures:
         print("[architecture-validation] FAILURES:")
         for f in failures:
@@ -137,6 +148,14 @@ def delivery_plan(
     # A minimal state snapshot for the gates that depend on recorded quality
     # evidence; git-backed gates are computed live against the real adapter.
     store = StateStore(next_run_id())
+
+    # Hydrate the recorded LOCAL QUALITY GATE verdict (if present) so the read-only
+    # plan reflects the executable local gate evidence. Never fabricated: loaded
+    # from the machine-written results/run/local-quality-gate.json artifact.
+    recorded_local = load_verdict()
+    if recorded_local is not None:
+        store.record("local_gate", recorded_local.to_dict())
+
     step = Kernel(store=store)
 
     planner = CommitPlanner(classifier=ChangeClassifier())
@@ -162,6 +181,116 @@ def delivery_plan(
     return 1
 
 
+def deliver(
+    run_id: str,
+    requirement: str = "qa-automation",
+    mode: str = "NEW_AUTOMATION",
+    execute: bool = False,
+    remote: str = "origin",
+    test_file: str = "",
+) -> int:
+    """PRODUCTION commit/push: CommitPlanner -> local_gate_fresh -> GitDelivery.
+
+    Resumes the named run's state (from its append-only log), hydrates the recorded
+    LOCAL QUALITY GATE verdict, and invokes the kernel delivery path. Without
+    `--execute` this is a dry-run (no git mutation). With `--execute`, a real
+    commit + push happen ONLY when the plan is safe (LOCAL GREEN + fresh evidence +
+    valid feature/fix branch + matching fingerprint). Any RED/stale/missing gate
+    refuses the delivery.
+    """
+    store = StateStore.resume(run_id)
+    if not store.resumed:
+        print(f"[deliver] ERROR: no run log for run_id={run_id!r}; nothing to deliver.")
+        return 2
+    recorded = load_verdict()
+    if recorded is not None and not store.get("local_gate"):
+        store.record("local_gate", recorded.to_dict())
+
+    plan_kwargs = {"test_file": test_file} if test_file else {}
+    kernel = Kernel(store=store)
+    attempt = kernel.deliver(
+        requirement=requirement,
+        automation_mode=mode,
+        push=True,
+        dry_run=not execute,
+        remote=remote,
+        **plan_kwargs,
+    )
+    print("[deliver] " + json.dumps(attempt.to_dict(), indent=2, sort_keys=True))
+    if attempt.delivered:
+        print(f"[deliver] DELIVERED: {attempt.commit_hash} pushed to {remote}.")
+        return 0
+    if attempt.dry_run and not any(r.startswith("unsafe_plan") for r in attempt.reasons):
+        print("[deliver] DRY-RUN: plan safe; commit/push validated, not executed.")
+        return 0
+    print("[deliver] REFUSED: " + "; ".join(attempt.reasons or ["plan unsafe"]))
+    return 1
+
+
+def local_gate(
+    out: str = "results/run/local-quality-gate.json",
+) -> int:
+    """Execute the LOCAL QUALITY GATE (deterministic, read-only git-wise).
+
+    Runs pytest, architecture validation, the deterministic machine dry-run and
+    a branch-policy check; also validates executed Robot+Allure artifacts with
+    the CI gate when they exist. Writes local-quality-gate.json and exits
+    0 = GREEN / 1 = RED. GREEN is the ONLY authorizer of COMMIT/PUSH and its
+    evidence (worktree fingerprint + branch + HEAD) is bound to the CURRENT
+    change set — a stale GREEN can never authorize new changes.
+    """
+    verdict = run_local_gate()
+    artifact = export_verdict(verdict, Path(out))
+    print("[local-gate] " + json.dumps(verdict.to_dict(), indent=2, sort_keys=True))
+    if verdict.green:
+        print(
+            f"[local-gate] GREEN: local quality gate satisfied for {verdict.branch} "
+            f"@{verdict.head[:12]}. Evidence artifact: {artifact}"
+        )
+        return 0
+    print(
+        f"[local-gate] RED: local quality gate FAILED for {verdict.branch!r}. "
+        "NO commit/push is authorized.",
+    )
+    for reason in verdict.reasons:
+        print(f"[local-gate]   - {reason}")
+    return 1
+
+
+def ci_gate(
+    output_xml: str,
+    allure_dir: str,
+    branch: str = "",
+    commit: str = "",
+    out: str = "results/run/ci-quality-gate.json",
+) -> int:
+    """Evaluate the REAL executed artifacts and emit a deterministic CI verdict.
+
+    Parses the Robot output.xml + Allure results produced by an execution (local
+    or inside the Jenkins container) and writes ci-quality-gate.json. Exit codes:
+    0 = GREEN, 1 = RED (unusable/non-clean artifacts), 2 = missing evidence.
+    The optional branch/commit cross-check enforces the autonomous QA branch
+    contract when the Jenkins checkout evidence is supplied.
+    """
+    gate = CIQualityGate()
+    result = gate.evaluate(
+        output_xml=output_xml,
+        allure_dir=allure_dir,
+        branch=branch or None,
+        commit=commit or None,
+    )
+    gate.export(result, Path(out))
+    print("[ci-gate] " + json.dumps(result.to_dict(), indent=2, sort_keys=True))
+    if result.status == "GREEN":
+        print("[ci-gate] GREEN: executed artifacts are clean and parity-verified.")
+        return 0
+    if result.status == "UNVERIFIED":
+        print("[ci-gate] UNVERIFIED: no executed evidence to judge.")
+        return 2
+    print("[ci-gate] RED: non-clean run or unusable artifacts — CI gate FAILED.")
+    return 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="orchestra")
     sub = parser.add_subparsers(dest="cmd")
@@ -171,6 +300,23 @@ def main(argv=None) -> int:
     dry.add_argument("--scope", default="FULL_REGRESSION")
 
     sub.add_parser("arch", help="read-only architecture validation")
+
+    lg = sub.add_parser(
+        "local-gate",
+        help="run the executable LOCAL QUALITY GATE; exit 0 GREEN / 1 RED "
+        "(GREEN is the only commit/push authorizer, bound to the current change set)",
+    )
+    lg.add_argument("--out", default="results/run/local-quality-gate.json")
+
+    cg = sub.add_parser(
+        "ci-gate",
+        help="evaluate Robot + Allure artifacts and emit the CI quality verdict (exit 0 GREEN / 1 RED / 2 UNVERIFIED)",
+    )
+    cg.add_argument("--output-xml", default="results/run/output.xml")
+    cg.add_argument("--allure-dir", default="results/run/allure-results")
+    cg.add_argument("--branch", default="", help="Jenkins checked-out branch (evidence cross-check)")
+    cg.add_argument("--commit", default="", help="Jenkins checked-out commit SHA (evidence cross-check)")
+    cg.add_argument("--out", default="results/run/ci-quality-gate.json")
 
     dp = sub.add_parser(
         "delivery-plan",
@@ -184,11 +330,36 @@ def main(argv=None) -> int:
     dp.add_argument("--no-dry-run", action="store_true",
                     help="dev/self-test only; never used for a real requirement")
 
+    dl = sub.add_parser(
+        "deliver",
+        help="PRODUCTION commit/push: CommitPlanner -> local_gate_fresh -> "
+        "GitDelivery (dry-run unless --execute and the plan is safe)",
+    )
+    dl.add_argument("--run-id", required=True, help="run whose state log is resumed")
+    dl.add_argument("--requirement", default="qa-automation")
+    dl.add_argument("--mode", default="NEW_AUTOMATION", choices=[
+        "REGRESSION", "NEW_AUTOMATION", "AUTOMATION_ENHANCEMENT", "AUTOMATION_FIX",
+    ])
+    dl.add_argument("--test-file", default="", help="requirement-owned test file")
+    dl.add_argument("--remote", default="origin")
+    dl.add_argument("--execute", action="store_true",
+                    help="perform a REAL commit + push when the plan is safe")
+
     args = parser.parse_args(argv)
     if args.cmd == "dry-run":
         return dry_run(args.scope, args.mode)
     if args.cmd == "arch":
         return architecture_validate()
+    if args.cmd == "local-gate":
+        return local_gate(out=args.out)
+    if args.cmd == "ci-gate":
+        return ci_gate(
+            output_xml=args.output_xml,
+            allure_dir=args.allure_dir,
+            branch=args.branch,
+            commit=args.commit,
+            out=args.out,
+        )
     if args.cmd == "delivery-plan":
         if args.no_dry_run:
             print("[delivery-plan] ERROR: execution mode is forbidden for autonomous git delivery.")
@@ -198,6 +369,15 @@ def main(argv=None) -> int:
             requirement=args.requirement,
             mode=args.mode,
             dry_run=True,
+        )
+    if args.cmd == "deliver":
+        return deliver(
+            run_id=args.run_id,
+            requirement=args.requirement,
+            mode=args.mode,
+            execute=args.execute,
+            remote=args.remote,
+            test_file=args.test_file,
         )
     parser.print_help()
     return 0

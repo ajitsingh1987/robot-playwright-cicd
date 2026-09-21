@@ -110,11 +110,13 @@ The expected Jenkins pipeline contains the following conceptual stages:
 
 ```text
 1. Checkout
-2. Docker Check
-3. Docker Build
-4. Docker Run
-5. Allure
-6. Archive
+2. Branch Verification   (record + verify checked-out branch/commit, QA branches only)
+3. Docker Check
+4. Docker Build
+5. Docker Run
+6. CI Quality Gate       (deterministic Robot + Allure verdict from parsed output.xml)
+7. Allure
+8. Archive
 ```
 
 ---
@@ -130,6 +132,32 @@ Clone repository
 Checkout requested branch
 Prepare workspace
 ```
+
+# BRANCH SELECTION CONTRACT (HARD RULE)
+
+Jenkins job **Robot-Playwright-Sanity** consumes **ALL** autonomous QA branches
+through the wildcard patterns:
+
+```text
+*/feature/qa-auto-*
+*/fix/qa-auto-*
+```
+
+Rules:
+
+```text
+- NEVER hard-code a single feature/fix branch (feature/qa-auto-orangehrm-automation,
+  */feature/qa-auto-admin, */fix/qa-auto-login, ...) in Jenkins branch selection.
+- EVERY feature/qa-auto-* and fix/qa-auto-* branch follows the SAME CI/CD path with
+  ZERO Jenkins changes.
+- New feature/fix branches are NEVER added to Jenkins, and the job configuration is
+  NEVER narrowed to the active branch.
+- `python -m orchestra arch` enforces this contract when a Jenkins config is discoverable;
+  narrowing either pattern to one branch is a blocking gate failure.
+```
+
+The CI/CD agent must verify that the Jenkins branch pattern stays wildcard-based and
+that no branch-specific job configuration is introduced.
 
 The CI/CD Agent should verify that newly generated files are compatible with the repository structure.
 
@@ -204,6 +232,67 @@ results/
 ```
 
 The CI/CD Agent must ensure that test execution produces artifacts in predictable locations.
+
+---
+
+# CI QUALITY GATE CONTRACT (HARD RULE)
+
+Jenkins MUST run a deterministic CI quality gate AFTER Robot + Allure execution:
+
+```text
+python -m orchestra ci-gate
+```
+
+The gate exits 0 ONLY when all of these hold, parsed from real artifacts:
+
+```text
+output.xml shows a real run (total > 0)
+failed == 0
+skipped == 0
+unresolved == 0
+Allure result-files present with status parity (count == Robot total)
+no credential leak in Allure artifacts
+checked-out branch matches feature/qa-auto-* or fix/qa-auto-*
+commit is a valid SHA
+```
+
+Verdict semantics:
+
+```text
+0  GREEN        -> evidence-backed clean run, gate passes
+1  RED          -> non-clean run or unusable artifacts, gate fails
+2  UNVERIFIED   -> no executed evidence, gate fails (never a pass)
+```
+
+The verdict artifact `results/run/ci-quality-gate.json` is archived as the CI
+evidence that backs CI_VALIDATION. File-existence checks are NEVER a substitute
+for the parsed verdict. Implemented in `orchestra/ci_quality.py`; the command is
+`python -m orchestra ci-gate` and the gate is unit-tested in
+`orchestra/tests/test_ci_quality.py`.
+
+A "Branch Verification" stage runs right after Checkout and fails the pipeline
+immediately when the checked-out branch is NOT an autonomous QA branch (feature/
+fix/qa-auto-*). This is the EXPECTED_BRANCH == ACTUAL_CHECKED_OUT_BRANCH
+contract. Never claim a branch/commit was verified unless real Jenkins checkout
+evidence (GIT_BRANCH / GIT_COMMIT) is present.
+
+BRANCH NORMALIZATION CONTRACT (HARD RULE): normalize the Jenkins-provided
+`GIT_BRANCH` with cmd-safe EXPLICIT prefix slicing only:
+
+```text
+refs/remotes/origin/  -> strip 20 chars
+remotes/origin/       -> strip 15 chars
+refs/heads/           -> strip 11 chars
+origin/               -> strip  7 chars
+*/                    -> strip  2 chars
+```
+
+NEVER use cmd wildcard substitution such as `%EXPECTED_BRANCH:*/=%`: cmd treats
+`*` as a wildcard and silently corrupts `feature/qa-auto-admin` into
+`qa-auto-admin`, failing every valid build. The Python mirror lives in
+`orchestra/branch_policy.py` (`_JENKINS_PREFIXES`, longest-first) and the
+contract is regression-tested (static + real cmd execution) in
+`orchestra/tests/test_jenkinsfile_branch_verification.py`.
 
 ---
 
