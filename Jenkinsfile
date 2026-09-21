@@ -55,6 +55,16 @@ pipeline {
                     for /f "delims=" %%h in ('git rev-parse HEAD') do set "ACTUAL_HEAD=%%h"
                     for /f "delims=" %%b in ('git rev-parse --abbrev-ref HEAD') do set "ACTUAL_BRANCH=%%b"
 
+                    rem Jenkins checks out a specific revision, so HEAD is DETACHED and
+                    rem "git rev-parse --abbrev-ref HEAD" returns the literal "HEAD".
+                    rem Resolve the real branch from the origin ref whose tip is exactly
+                    rem this commit, then strip the origin/ prefix. Every downstream
+                    rem check (wildcard family, expected-vs-actual, exact commit) is
+                    rem unchanged; a commit no origin branch points at stays "HEAD" and
+                    rem is rejected.
+                    if /I "%ACTUAL_BRANCH%"=="HEAD" for /f "tokens=*" %%b in ('git branch -r --points-at HEAD') do set "ACTUAL_BRANCH=%%b"
+                    if /I "%ACTUAL_BRANCH:~0,7%"=="origin/" set "ACTUAL_BRANCH=%ACTUAL_BRANCH:~7%"
+
                     echo Expected branch: %EXPECTED_BRANCH%
                     echo Actual branch:   %ACTUAL_BRANCH%
                     echo Expected commit: %EXPECTED_COMMIT%
