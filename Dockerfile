@@ -52,4 +52,11 @@ COPY . .
 
 # Run deterministic framework tests before Robot. A broken orchestrator must never
 # be hidden by a browser-only result.
-CMD ["sh", "-c", "rm -rf results/run && mkdir -p results/run/allure-results && python -m pytest orchestra/tests -q && python -m orchestra arch && python -m robot --outputdir results/run --listener allure_robotframework:results/run/allure-results tests"]
+#
+# Cleanup ownership: Jenkins "Clean Results" stage removes/recreates
+# results/run on the HOST before this container starts, and Jenkins mounts
+# %WORKSPACE%\results at /app/results. The container therefore MUST NOT delete
+# results/run (a mounted host directory): on Windows bind mounts rm -rf fails
+# with "Permission denied", aborting the command chain before Robot ever runs.
+# The container only ensures the subdirectories it writes to exist (idempotent).
+CMD ["sh", "-c", "mkdir -p results/run/allure-results && python -m pytest orchestra/tests -q && python -m orchestra arch && python -m robot --outputdir results/run --listener allure_robotframework:results/run/allure-results tests"]
