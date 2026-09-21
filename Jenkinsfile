@@ -116,8 +116,8 @@ pipeline {
         stage('Clean Results') {
             steps {
                 bat '''
-                    if exist results\run rmdir /s /q results\run
-                    mkdir results\run\allure-results
+                    if exist results\\run rmdir /s /q results\\run
+                    mkdir results\\run\\allure-results
                 '''
             }
         }
