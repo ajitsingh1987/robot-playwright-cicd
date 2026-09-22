@@ -12,7 +12,7 @@ Start Isolated Context
 
 Open Page
     [Arguments]    ${url}
-    New Page    ${url}    wait_until=domcontentloaded
+    New Page    ${url}    wait_until=commit
 
 Stop Browser
     Close Browser

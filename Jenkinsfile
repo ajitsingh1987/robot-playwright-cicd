@@ -162,6 +162,8 @@ pipeline {
         // 4. Run Robot + Playwright tests in Docker.
         //    docker run returns non-zero when any test fails.
         //    Results are still published through catchError.
+        //    No blanket retry: a flaky failure must surface as FAILURE and be
+        //    fixed at its root cause, never masked by re-running the suite.
         stage('Docker Run') {
             steps {
                 catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
@@ -170,25 +172,8 @@ pipeline {
             }
         }
 
-        // 4b. Deterministic CI quality gate: parse output.xml (test counts),
-        //     validate Allure parity + credential scan, and cross-check the
-        //     checked-out branch/commit against the QA branch contract. Produces
-        //     results/run/ci-quality-gate.json and exits 0 only when GREEN.
-        stage('CI Quality Gate') {
-            steps {
-                bat '''
-                    docker run --rm -v "%WORKSPACE%\\results:/app/results" %IMAGE_NAME% python -m orchestra ci-gate ^
-                        --output-xml /app/results/run/output.xml ^
-                        --allure-dir /app/results/run/allure-results ^
-                        --branch %GIT_BRANCH% ^
-                        --commit %GIT_COMMIT% ^
-                        --out /app/results/run/ci-quality-gate.json
-                    if errorlevel 1 exit /b 1
-                '''
-            }
-        }
-
-        // 5. Generate Allure report from workspace results.
+        // 5. Generate Allure report from workspace results BEFORE the quality
+        //    gate so evidence is always available to publish, even on failure.
         //    reportBuildPolicy ALWAYS -> report is built even on test failure.
         stage('Allure') {
             steps {
@@ -197,6 +182,28 @@ pipeline {
                        results: [[path: 'results/run/allure-results']],
                        report: 'results/run/allure-report',
                        reportBuildPolicy: 'ALWAYS'
+            }
+        }
+
+        // 5b. Deterministic CI quality gate: parse output.xml (test counts),
+        //     validate Allure parity + credential scan, and cross-check the
+        //     checked-out branch/commit against the QA branch contract. Produces
+        //     results/run/ci-quality-gate.json and exits 0 only when GREEN.
+        //     A RED gate records FAILURE but does not abort the pipeline, so the
+        //     Allure report and all artifacts are still archived as evidence.
+        stage('CI Quality Gate') {
+            steps {
+                catchError(buildResult: 'FAILURE', stageResult: 'FAILURE') {
+                    bat '''
+                        docker run --rm -v "%WORKSPACE%\\results:/app/results" %IMAGE_NAME% python -m orchestra ci-gate ^
+                            --output-xml /app/results/run/output.xml ^
+                            --allure-dir /app/results/run/allure-results ^
+                            --branch %GIT_BRANCH% ^
+                            --commit %GIT_COMMIT% ^
+                            --out /app/results/run/ci-quality-gate.json
+                        if errorlevel 1 exit /b 1
+                    '''
+                }
             }
         }
 

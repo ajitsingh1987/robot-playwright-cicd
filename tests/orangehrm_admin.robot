@@ -51,20 +51,28 @@ System User Creation Rejects Duplicate Username
     Verify Username Already Exists Error
 
 System Users Search Finds Created User
-    [Documentation]    Verify the Username search filter returns the created test user.
+    [Documentation]    Verify the Username search filter returns a created test user.
     Login With Credentials    ${ORANGEHRM_USERNAME}    ${ORANGEHRM_PASSWORD}
     Verify Dashboard Page Contains    Dashboard
-    Go To System Users Page
-    Search System Users By Username    ${ADMIN_TEST_USERNAME}
-    Verify User Found In Table    ${ADMIN_TEST_USERNAME}
+    Go To Add System User Page
+    Fill Complete Add User Form    username=${ADMIN_SEARCH_USERNAME}
+    Click Add User Save
+    Verify Success Toast Displayed
+    Verify Redirected To System Users List
+    Search System Users By Username    ${ADMIN_SEARCH_USERNAME}
+    Verify User Found In Table    ${ADMIN_SEARCH_USERNAME}
 
 Delete Confirmation Dialog Appears
     [Documentation]    Verify clicking delete on a user opens the confirmation dialog and cancel closes it.
     Login With Credentials    ${ORANGEHRM_USERNAME}    ${ORANGEHRM_PASSWORD}
     Verify Dashboard Page Contains    Dashboard
-    Go To System Users Page
-    Search System Users By Username    ${ADMIN_TEST_USERNAME}
-    Click Delete Button For User    ${ADMIN_TEST_USERNAME}
+    Go To Add System User Page
+    Fill Complete Add User Form    username=${ADMIN_DELETE_USERNAME}
+    Click Add User Save
+    Verify Success Toast Displayed
+    Verify Redirected To System Users List
+    Search System Users By Username    ${ADMIN_DELETE_USERNAME}
+    Click Delete Button For User    ${ADMIN_DELETE_USERNAME}
     Verify Delete Confirmation Dialog Displayed
     Click Delete Confirm No
 

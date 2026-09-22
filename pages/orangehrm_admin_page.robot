@@ -87,6 +87,19 @@ Select Status In Add Form
     Click
     ...    //div[contains(@class,"oxd-select-dropdown")]//div[contains(@class,"oxd-select-option")][normalize-space()="${status}"]
 
+Resolve Existing Employee Name
+    # Resolves an employee that actually exists at run time. The Add User
+    # form's Employee Name autocomplete requires a real employee, and the
+    # shared demo database is modified by other automation runs, so a name
+    # hard-coded at authoring time can stop matching. Query the same PIM
+    # employees endpoint the autocomplete widget uses and pick a non-empty,
+    # non-terminated match. The widget matches a first name substring, so
+    # the returned first name is typed into the autocomplete.
+    ${expression}=    Set Variable    async () => { const res = await fetch('/web/index.php/api/v2/pim/employees?nameOrId=a&limit=20'); const payload = await res.json(); const rows = payload.data || []; const pick = rows.find(row => row.firstName && row.terminationId === null); return pick ? pick.firstName.trim() : ''; }
+    ${employee}=    Evaluate JavaScript    ${EMPTY}    ${expression}
+    Should Not Be Empty    ${employee}
+    RETURN    ${employee}
+
 Type Employee Name In Add Form
     [Arguments]    ${search_text}
     ${input}=    Set Variable
@@ -126,10 +139,14 @@ Click Add User Save
 Fill Complete Add User Form
     [Arguments]
     ...    ${role}=Admin
-    ...    ${employee_name}=John
+    ...    ${employee_name}=${EMPTY}
     ...    ${status}=Enabled
     ...    ${username}=${ADMIN_TEST_USERNAME}
     ...    ${password}=${ADMIN_TEST_PASSWORD}
+
+    IF    '${employee_name}' == '${EMPTY}'
+        ${employee_name}=    Resolve Existing Employee Name
+    END
 
     Select User Role In Add Form    ${role}
     Type Employee Name In Add Form    ${employee_name}
@@ -216,12 +233,13 @@ Verify Job Titles Page Displayed
     Should Contain    ${url}    /admin/viewJobTitleList
 
 Verify Job Titles Has Records
-    Wait For Elements State
-    ...    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")] >> nth=0
-    ...    visible
-    ...    timeout=30s
-    ${count}=    Get Element Count    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")]
-    Should Be True    ${count} > 1    Job Titles table should have at least one record
+    Wait Until Keyword Succeeds
+    ...    30s
+    ...    1s
+    ...    Record Count Should Be Greater Than
+    ...    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")]
+    ...    1
+    ...    Job Titles table should have at least one record
 
 # ═══════════════════════ PAY GRADES PAGE ═══════════════════════
 Go To Pay Grades Page
@@ -237,12 +255,13 @@ Verify Pay Grades Page Displayed
     Should Contain    ${url}    /admin/viewPayGrades
 
 Verify Pay Grades Has Records
-    Wait For Elements State
-    ...    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")] >> nth=0
-    ...    visible
-    ...    timeout=30s
-    ${count}=    Get Element Count    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")]
-    Should Be True    ${count} > 1    Pay Grades table should have at least one record
+    Wait Until Keyword Succeeds
+    ...    30s
+    ...    1s
+    ...    Record Count Should Be Greater Than
+    ...    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")]
+    ...    1
+    ...    Pay Grades table should have at least one record
 
 # ═══════════════════════ SKILLS PAGE ═══════════════════════
 Go To Skills Page
@@ -258,12 +277,13 @@ Verify Skills Page Displayed
     Should Contain    ${url}    /admin/viewSkills
 
 Verify Skills Has Records
-    Wait For Elements State
-    ...    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")] >> nth=0
-    ...    visible
-    ...    timeout=30s
-    ${count}=    Get Element Count    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")]
-    Should Be True    ${count} > 1    Skills table should have at least one record
+    Wait Until Keyword Succeeds
+    ...    30s
+    ...    1s
+    ...    Record Count Should Be Greater Than
+    ...    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")]
+    ...    1
+    ...    Skills table should have at least one record
 
 # ═══════════════════════ LOCATIONS PAGE ═══════════════════════
 Go To Locations Page
@@ -279,9 +299,15 @@ Verify Locations Page Displayed
     Should Contain    ${url}    /admin/viewLocations
 
 Verify Locations Has Records
-    Wait For Elements State
-    ...    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")] >> nth=0
-    ...    visible
-    ...    timeout=30s
-    ${count}=    Get Element Count    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")]
-    Should Be True    ${count} > 1    Locations table should have at least one record
+    Wait Until Keyword Succeeds
+    ...    30s
+    ...    1s
+    ...    Record Count Should Be Greater Than
+    ...    //div[contains(@class,"oxd-table")]//div[contains(@class,"oxd-table-row")]
+    ...    1
+    ...    Locations table should have at least one record
+
+Record Count Should Be Greater Than
+    [Arguments]    ${locator}    ${threshold}    ${message}
+    ${count}=    Get Element Count    ${locator}
+    Should Be True    ${count} > ${threshold}    ${message} (found ${count})

@@ -15,7 +15,8 @@ ${USERNAME_INPUT}               ${EMPLOYEE_FORM_SCOPE}//*[contains(@class,"oxd-i
 ${PASSWORD_INPUT}               ${EMPLOYEE_FORM_SCOPE}//*[contains(@class,"oxd-input-group")][.//label[normalize-space()="Password"]]//input
 ${CONFIRM_PASSWORD_INPUT}       ${EMPLOYEE_FORM_SCOPE}//*[contains(@class,"oxd-input-group")][.//label[normalize-space()="Confirm Password"]]//input
 
-${CREATE_LOGIN_TOGGLE}          css=.orangehrm-employee-form .oxd-switch-input
+${CREATE_LOGIN_TOGGLE}          css=.orangehrm-employee-form .oxd-switch-wrapper label .oxd-switch-input
+${CREATE_LOGIN_CHECKBOX}        css=.orangehrm-employee-form .oxd-switch-wrapper label input[type="checkbox"]
 ${SAVE_BUTTON}                  //button[normalize-space()="Save"]
 
 ${ADD_EMPLOYEE_HEADING}         //h6[normalize-space()="Add Employee"]
@@ -99,15 +100,13 @@ Ensure Create Login Details Enabled
     ...    visible
     ...    timeout=30s
 
-    # The login-details fields are the reliable UI state indicator.
-    # If Username is already visible, the toggle is already enabled.
-    ${login_fields_visible}=    Run Keyword And Return Status
-    ...    Wait For Elements State
-    ...    ${USERNAME_INPUT}
-    ...    visible
-    ...    timeout=2s
+    # The rendered switch is a decorative SPAN; the authoritative state lives
+    # on the real checkbox input inside the switch wrapper. Reading the span's
+    # checked property returns undefined, so the toggle must be read via the
+    # checkbox input. Get Checkbox State returns a boolean, not a string.
+    ${toggle_state}=    Get Checkbox State    ${CREATE_LOGIN_CHECKBOX}
 
-    IF    not ${login_fields_visible}
+    IF    not ${toggle_state}
         Click    ${CREATE_LOGIN_TOGGLE}
 
         Wait For Elements State
