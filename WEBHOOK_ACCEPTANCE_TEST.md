@@ -26,3 +26,11 @@ so the real GitHub push -> webhook -> Jenkins path can be validated.
   GitHub Branch Source and is triggered ONLY by the repository webhook.
 - Expected: this push makes the GitHub webhook deliver the event and
   `Robot-Playwright-Sanity` auto-builds `feature/qa-auto-admin` at this commit's SHA.
+
+## Verification run 3b (Multibranch re-verify)
+
+- Re-verification marker for the Multibranch path. Run 3 build #2 was RED only
+  because the public OrangeHRM demo server timed out rendering one login page
+  (41/42 passed); the webhook match and correct-SHA checkout were confirmed.
+- Expected: this push is matched by branch discovery and auto-builds
+  `feature/qa-auto-admin` at this commit's SHA, targeting a GREEN ci-gate.
