@@ -25,6 +25,7 @@ from typing import Dict, List, Optional
 
 from .adapters.allure import AllureRunner
 from .adapters.robot import RobotRunner
+from .branch_policy import normalize_jenkins_branch
 
 # The identical branch contract enforced by the Jenkins branch-selection guard:
 # a CI-triggering build must originate from an autonomous feature or fix branch.
@@ -142,11 +143,10 @@ class CIQualityGate:
     ) -> None:
         """When provided, branch/commit must satisfy the autonomous-delivery contract."""
         if branch is not None:
-            stripped = (branch or "").strip()
-            # Jenkins reports e.g. origin/feature/qa-auto-x or */feature/qa-auto-x.
-            for prefix in ("origin/", "*/"):
-                if stripped.startswith(prefix):
-                    stripped = stripped[len(prefix):]
+            # Jenkins reports the checkout branch with a prefix (origin/,
+            # refs/remotes/origin/, */, ...). The shared branch_policy
+            # normalizer strips every known prefix deterministically.
+            stripped = normalize_jenkins_branch(branch)
             if stripped and not stripped.startswith(QA_BRANCH_PATTERNS):
                 result.reasons.append(f"branch {branch!r} not in {QA_BRANCH_PATTERNS}")
                 result.status = "RED"

@@ -208,3 +208,71 @@ def test_validate_policy_silent_when_no_config_discoverable(monkeypatch):
     monkeypatch.setattr(pol, "LIVE_CONFIG_PATHS", [])
     monkeypatch.delenv("QA_JENKINS_CONFIG_XML", raising=False)
     assert validate_jenkins_branch_policy() == []
+
+
+MULTIBRANCH_GOOD_CONFIG = """<?xml version='1.1' encoding='UTF-8'?>
+<org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject plugin="workflow-multibranch">
+  <sources class="jenkins.branch.MultiBranchProject$BranchSourceList" plugin="branch-api">
+    <data>
+      <jenkins.branch.BranchSource>
+        <source class="org.jenkinsci.plugins.github_branch_source.GitHubSCMSource" plugin="github-branch-source">
+          <id>github-1</id>
+          <apiUri>https://api.github.com</apiUri>
+          <repoOwner>ajitsingh1987</repoOwner>
+          <repository>robot-playwright-cicd</repository>
+          <repositoryUrl>https://github.com/ajitsingh1987/robot-playwright-cicd.git</repositoryUrl>
+          <traits>
+            <org.jenkinsci.plugins.github__branch__source.BranchDiscoveryTrait/>
+            <jenkins.scm.impl.trait.WildcardSCMHeadFilterTrait>
+              <includes>feature/qa-auto-* fix/qa-auto-*</includes>
+              <excludes></excludes>
+            </jenkins.scm.impl.trait.WildcardSCMHeadFilterTrait>
+          </traits>
+        </source>
+      </jenkins.branch.BranchSource>
+    </data>
+  </sources>
+</org.jenkinsci.plugins.workflow.multibranch.WorkflowMultiBranchProject>"""
+
+MULTIBRANCH_HARD_CODED_CONFIG = MULTIBRANCH_GOOD_CONFIG.replace(
+    "<includes>feature/qa-auto-* fix/qa-auto-*</includes>",
+    "<includes>feature/qa-auto-orangehrm-automation fix/qa-auto-*</includes>",
+)
+
+MULTIBRANCH_WRONG_REPO_CONFIG = MULTIBRANCH_GOOD_CONFIG.replace(
+    "<repositoryUrl>https://github.com/ajitsingh1987/robot-playwright-cicd.git</repositoryUrl>",
+    "<repositoryUrl>https://github.com/other/repo.git</repositoryUrl>",
+)
+
+MULTIBRANCH_PERIODIC_CONFIG = MULTIBRANCH_GOOD_CONFIG.replace(
+    "<traits>",
+    "<triggers><com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger>"
+    "<spec>* * * * *</spec></com.cloudbees.hudson.plugins.folder.computed.PeriodicFolderTrigger>"
+    "</triggers><traits>",
+)
+
+
+def test_multibranch_good_config_passes():
+    assert validate_config(MULTIBRANCH_GOOD_CONFIG) == []
+
+
+def test_multibranch_hard_coded_branch_is_rejected():
+    violations = validate_config(MULTIBRANCH_HARD_CODED_CONFIG)
+    assert any("hard-coded QA branch" in v for v in violations)
+
+
+def test_multibranch_wrong_repository_url_fails():
+    violations = validate_config(MULTIBRANCH_WRONG_REPO_CONFIG)
+    assert any("repository URL mismatch" in v for v in violations)
+
+
+def test_multibranch_periodic_trigger_is_rejected():
+    violations = validate_config(MULTIBRANCH_PERIODIC_CONFIG)
+    assert any("webhook-only contract" in v for v in violations)
+
+
+def test_multibranch_includes_are_extracted_from_filter():
+    from orchestra.jenkins_policy import branch_filter_includes_from_xml
+
+    includes = branch_filter_includes_from_xml(MULTIBRANCH_GOOD_CONFIG)
+    assert set(includes) == {"feature/qa-auto-*", "fix/qa-auto-*"}

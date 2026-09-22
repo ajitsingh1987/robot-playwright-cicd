@@ -55,6 +55,29 @@ def branch_specs_from_xml(xml_text: str) -> List[str]:
     return specs
 
 
+def branch_filter_includes_from_xml(xml_text: str) -> List[str]:
+    """Extract branch-discovery wildcard includes from a Jenkins config.xml.
+
+    Multibranch Pipeline (GitHub Branch Source) jobs select branches through a
+    WildcardSCMHeadFilterTrait <includes> token list (e.g.
+    "feature/qa-auto-* fix/qa-auto-*"). A hard-coded token such as
+    "feature/qa-auto-admin" is the multibranch equivalent of a narrowed
+    BranchSpec and MUST be rejected by the branch-pattern contract.
+    """
+    root = ET.fromstring(xml_text)
+    includes = []
+    for el in root.iter():
+        if el.tag.rsplit(".", 1)[-1] != "WildcardSCMHeadFilterTrait":
+            continue
+        for child in el:
+            if child.tag.rsplit(".", 1)[-1] == "includes":
+                for token in (child.text or "").split():
+                    token = token.strip()
+                    if token:
+                        includes.append(token)
+    return includes
+
+
 def jenkins_triggers_from_xml(xml_text: str) -> List[str]:
     """Return the trigger class names found in the config, e.g. GitHubPushTrigger."""
     root = ET.fromstring(xml_text)
@@ -62,24 +85,49 @@ def jenkins_triggers_from_xml(xml_text: str) -> List[str]:
 
 
 def repository_url_from_xml(xml_text: str) -> str | None:
-    """Return the SCM remote URL if present."""
+    """Return the SCM remote URL if present.
+
+    Supports git-plugin <url>, GitHubSCMSource <repositoryUrl>, and derives the
+    URL from repoOwner/repository when those are the only source elements.
+    """
     root = ET.fromstring(xml_text)
+    for repo_url in root.iter("repositoryUrl"):
+        if repo_url.text and repo_url.text.strip():
+            return repo_url.text.strip()
     for url in root.iter("url"):
         if url.text and url.text.strip():
             return url.text.strip()
+    owner = repository = None
+    for el in root.iter():
+        tag = el.tag.rsplit(".", 1)[-1]
+        if tag == "repoOwner":
+            owner = (el.text or "").strip()
+        elif tag == "repository":
+            repository = (el.text or "").strip()
+    if owner and repository:
+        return f"https://github.com/{owner}/{repository}.git"
     return None
+
+
+def _strip_ref_prefix(spec: str) -> str:
+    """Normalize */feature/qa-auto-* and feature/qa-auto-* to the same token."""
+    return spec[2:] if spec.startswith("*/") else spec
 
 
 def violations_for_specs(specs: List[str]) -> List[str]:
     """Return a list of violations; an empty list means the specs are compliant.
 
     Rules enforced (hard contract):
-      1. The wildcards */feature/qa-auto-* and */fix/qa-auto-* MUST be present.
+      1. The wildcards */feature/qa-auto-* and */fix/qa-auto-* MUST be present
+         (a Multibranch WildcardSCMHeadFilterTrait token of the same branch is
+         compared with the leading */ already consumed by branch discovery).
       2. No individual feature/qa-auto-<x> or fix/qa-auto-<x> branch may be
          hard-coded.
     """
     violations = []
-    missing = [p for p in EXPECTED_BRANCH_PATTERNS if p not in specs]
+    normalized = [_strip_ref_prefix(s) for s in specs]
+    expected = {_strip_ref_prefix(p) for p in EXPECTED_BRANCH_PATTERNS}
+    missing = sorted(expected - set(normalized))
     if missing:
         violations.append(
             f"Jenkins BranchSpec must include {list(EXPECTED_BRANCH_PATTERNS)!r}, "
@@ -91,6 +139,41 @@ def violations_for_specs(specs: List[str]) -> List[str]:
                 f"hard-coded QA branch in Jenkins BranchSpec: {spec!r} "
                 f"(must be {list(EXPECTED_BRANCH_PATTERNS)!r})"
             )
+    return violations
+
+
+def _is_multibranch(root: ET.Element) -> bool:
+    return root.tag.rsplit(".", 1)[-1] == "WorkflowMultiBranchProject"
+
+
+def validate_multibranch_config(root: ET.Element, xml_text: str) -> List[str]:
+    """Validate a Multibranch Pipeline config (GitHub Branch Source).
+
+    The branch contract maps to the discovery wildcard filter: BOTH
+    feature/qa-auto-* and fix/qa-auto-* must be discovered and no single QA
+    branch may be pinned. Triggering must stay webhook-only: periodic or timed
+    scan triggers are architecture violations (the GitHub webhook is the ONLY
+    allowed mechanism to start the job).
+    """
+    violations = []
+    classes = {el.get("class", "") for el in root.iter() if el.get("class")}
+    spec_text = [el.text for el in root.iter() if el.tag.rsplit(".", 1)[-1] == "WildcardSCMHeadFilterTrait"]
+    if not any("GitHubSCMSource" in c for c in classes):
+        violations.append("Multibranch job has no GitHubSCMSource (GitHub Branch Source)")
+    specs = branch_filter_includes_from_xml(xml_text)
+    if not specs:
+        violations.append(
+            "Multibranch job has no wildcard branch filter "
+            "(must discover feature/qa-auto-* and fix/qa-auto-*)"
+        )
+    elif violations_for_specs(specs):
+        violations.extend(violations_for_specs(specs))
+    url = repository_url_from_xml(xml_text)
+    if url and url != EXPECTED_REPOSITORY:
+        violations.append(
+            f"Jenkins SCM repository URL mismatch: {url!r} "
+            f"(expected {EXPECTED_REPOSITORY!r})"
+        )
     return violations
 
 
@@ -106,6 +189,15 @@ def validate_config(xml_text: str) -> List[str]:
             roots[tag] += 1
     except ET.ParseError as exc:
         return [f"Jenkins config.xml is not valid XML: {exc}"]
+
+    if _is_multibranch(root):
+        violations.extend(validate_multibranch_config(root, xml_text))
+        for trigger in ("PeriodicFolderTrigger", "TimerTrigger"):
+            if trigger in roots:
+                violations.append(
+                    f"webhook-only contract violated: schedule trigger {trigger} present"
+                )
+        return violations
 
     if "BranchSpec" not in roots:
         violations.append("Jenkins config.xml contains no <BranchSpec> (git branch selection)")

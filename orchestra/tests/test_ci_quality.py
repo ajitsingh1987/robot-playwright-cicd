@@ -145,6 +145,28 @@ def test_jenkins_origin_prefixed_branch_is_accepted(tmp_path):
     assert res.status == "GREEN"
 
 
+def test_multibranch_refs_remotes_branch_is_accepted(tmp_path):
+    gate = CIQualityGate()
+    res = gate.evaluate(
+        output_xml=_clean_output_xml(tmp_path / "out" / "output.xml", total=4),
+        allure_dir=_allure_dir(tmp_path / "ar", 4),
+        branch="refs/remotes/origin/feature/qa-auto-admin",
+        commit="e44767eabc",
+    )
+    assert res.status == "GREEN"
+
+
+def test_multibranch_star_prefixed_branch_is_accepted(tmp_path):
+    gate = CIQualityGate()
+    res = gate.evaluate(
+        output_xml=_clean_output_xml(tmp_path / "out" / "output.xml", total=4),
+        allure_dir=_allure_dir(tmp_path / "ar", 4),
+        branch="*/feature/qa-auto-recruitment",
+        commit="e44767eabc",
+    )
+    assert res.status == "GREEN"
+
+
 def test_invalid_sha_is_red(tmp_path):
     gate = CIQualityGate()
     res = gate.evaluate(
