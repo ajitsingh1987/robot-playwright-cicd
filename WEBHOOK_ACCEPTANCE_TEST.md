@@ -34,3 +34,14 @@ so the real GitHub push -> webhook -> Jenkins path can be validated.
   (41/42 passed); the webhook match and correct-SHA checkout were confirmed.
 - Expected: this push is matched by branch discovery and auto-builds
   `feature/qa-auto-admin` at this commit's SHA, targeting a GREEN ci-gate.
+
+## Verification run 4 (guard commit)
+
+- Commit `9fb9782` landed the multibranch regression-guard changes
+  (`orchestra/ci_quality.py`, `orchestra/jenkins_policy.py` and their tests).
+  The webhook matched and Build #4 checked out exactly `9fb9782`, proving the
+  trigger path again for a code (non-marker) commit.
+- Build #4 result: RED only because the public OrangeHRM demo server timed out
+  rendering one login page again (41/42 passed); ci-gate deterministically RED.
+- Turnaround marker for the final re-verification: this push must match and
+  auto-build `feature/qa-auto-admin` at this commit's SHA, targeting a GREEN ci-gate.
